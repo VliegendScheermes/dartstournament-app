@@ -1,0 +1,103 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Tournament {
+  id                      String   @id @default(uuid())
+  userId                  String   // Supabase user ID
+  tournamentName          String
+  numPools                Int
+  numBoards               Int
+  advanceToCrossFinals    Int
+  advanceToLosersFinal    Int
+  useClasses              Boolean
+  liveDrawDelaySeconds    Int
+  youtubeStreamUrl        String?
+  status                  String   // 'setup' | 'pool-play' | 'finals' | 'completed' | 'archived'
+  drawState               Json?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  players   Player[]
+  pools     Pool[]
+  matches   Match[]
+  rounds    Round[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+model Player {
+  id           String  @id @default(uuid())
+  tournamentId String
+  name         String
+  class        String? // 'A' | 'B' | 'C'
+
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  pools        PoolPlayer[]
+  matchesAsP1  Match[] @relation("Player1Matches")
+  matchesAsP2  Match[] @relation("Player2Matches")
+
+  @@index([tournamentId])
+}
+
+model Pool {
+  id           String  @id @default(uuid())
+  tournamentId String
+  name         String
+  boardNumber  Int?
+
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  players      PoolPlayer[]
+  matches      Match[]
+
+  @@index([tournamentId])
+}
+
+model PoolPlayer {
+  poolId    String
+  playerId  String
+
+  pool      Pool   @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  player    Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@id([poolId, playerId])
+}
+
+model Match {
+  id           String   @id @default(uuid())
+  tournamentId String
+  roundIndex   Int
+  poolId       String?
+  stage        String   // 'POOL' | 'CROSS' | 'LOSERS'
+  player1Id    String
+  player2Id    String
+  legsP1       Int?
+  legsP2       Int?
+  confirmed    Boolean  @default(false)
+  boardNumber  Int?
+
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  pool         Pool?      @relation(fields: [poolId], references: [id], onDelete: SetNull)
+  player1      Player     @relation("Player1Matches", fields: [player1Id], references: [id], onDelete: Cascade)
+  player2      Player     @relation("Player2Matches", fields: [player2Id], references: [id], onDelete: Cascade)
+
+  @@index([tournamentId])
+  @@index([poolId])
+}
+
+model Round {
+  id           String   @id @default(uuid())
+  tournamentId String
+  index        Int
+  savedAll     Boolean  @default(false)
+
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, index])
+}
