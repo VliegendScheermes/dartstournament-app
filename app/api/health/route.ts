@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
 export async function GET() {
-  const checks = {
+  const checks: any = {
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV,
     variables: {
