@@ -287,7 +287,9 @@ export const useTournamentStore = create<TournamentStore>()((set, get) => ({
 
       // Update settings
       updateSettings: async (id, settings) => {
-        await get().updateTournament(id, { settings: { ...get().getTournament(id)?.settings, ...settings } });
+        const tournament = get().getTournament(id);
+        if (!tournament) return;
+        await get().updateTournament(id, { settings: { ...tournament.settings, ...settings } });
       },
 
       // Add player
