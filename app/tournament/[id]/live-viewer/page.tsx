@@ -20,17 +20,6 @@ export default function LiveViewerPage({ params }: LiveViewerPageProps) {
   // Single source of truth: backend tournament status
   const tournament = useTournamentStore(state => state.tournaments.find(t => t.id === id));
 
-  // Cross-tab sync
-  useEffect(() => {
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'darts-tournament-storage') {
-        useTournamentStore.persist.rehydrate();
-      }
-    };
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
-  }, []);
-
   useEffect(() => {
     setIsHydrated(true);
   }, []);
