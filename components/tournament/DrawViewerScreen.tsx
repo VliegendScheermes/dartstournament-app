@@ -16,10 +16,18 @@ export function DrawViewerScreen({ id }: { id: string }) {
   const centerStageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const tournament = useTournamentStore(state => state.tournaments.find(t => t.id === id));
+  const loadTournament = useTournamentStore(state => state.loadTournament);
 
   useEffect(() => {
     setIsHydrated(true);
   }, []);
+
+  // Load tournament data from API
+  useEffect(() => {
+    if (isHydrated) {
+      loadTournament(id);
+    }
+  }, [id, isHydrated, loadTournament]);
 
   useEffect(() => {
     if (!tournament) return;

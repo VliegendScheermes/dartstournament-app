@@ -6,7 +6,8 @@
  * Reads live match state from localStorage (written by the scoreboard page).
  */
 
-import { use, useState, useEffect } from 'react';
+import { use, useState, useEffect, useRef } from 'react';
+import { soundPlayer } from '@/lib/audio/soundPlayer';
 
 const CHECKOUTS: Record<number, string> = {
   170: 'T20 T20 D25', 167: 'T20 T19 D25', 164: 'T20 T18 D25',
@@ -60,16 +61,19 @@ const CHECKOUTS: Record<number, string> = {
 };
 
 interface LiveScoreData {
+  tournamentName: string;
   p1Name: string;
   p1Score: number;
   p1Legs: number;
   p1Sets: number;
   p1Active: boolean;
+  p1StartedLeg: boolean;
   p2Name: string;
   p2Score: number;
   p2Legs: number;
   p2Sets: number;
   p2Active: boolean;
+  p2StartedLeg: boolean;
   startScore: number;
   legsEnabled: boolean;
   legs: number;
@@ -84,17 +88,44 @@ interface OBSOverlayPageProps {
 export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
   const { id } = use(params);
   const [data, setData] = useState<LiveScoreData | null>(null);
+  const prevP1Score = useRef<number | null>(null);
+  const prevP2Score = useRef<number | null>(null);
 
   const readState = () => {
     try {
       const raw = localStorage.getItem(`darts-scoreboard-${id}`);
-      if (raw) setData(JSON.parse(raw));
+      if (raw) {
+        const newData = JSON.parse(raw);
+
+        // Detect score changes and play sound
+        if (data) {
+          // Player 1 scored
+          if (newData.p1Score < data.p1Score && prevP1Score.current !== null) {
+            const scoreDiff = prevP1Score.current - newData.p1Score;
+            soundPlayer.playScore(scoreDiff);
+          }
+          // Player 2 scored
+          if (newData.p2Score < data.p2Score && prevP2Score.current !== null) {
+            const scoreDiff = prevP2Score.current - newData.p2Score;
+            soundPlayer.playScore(scoreDiff);
+          }
+        }
+
+        // Update previous scores
+        prevP1Score.current = newData.p1Score;
+        prevP2Score.current = newData.p2Score;
+
+        setData(newData);
+      }
     } catch {
       // ignore parse errors
     }
   };
 
   useEffect(() => {
+    // Preload sounds
+    soundPlayer.preloadCommonSounds();
+
     readState();
 
     const onStorage = (e: StorageEvent) => {
@@ -107,10 +138,10 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
 
   const formatSpec = () => {
     if (!data) return '';
-    if (data.setsEnabled && data.legsEnabled) return `Best of ${data.sets} Sets · ${data.legs} Legs`;
-    if (data.setsEnabled) return `Best of ${data.sets} Sets`;
-    if (data.legsEnabled) return `First to ${Math.ceil(data.legs / 2) + (data.legs % 2 === 0 ? 0 : 0)} · Best of ${data.legs} Legs`;
-    return `${data.startScore}`;
+    const parts = [];
+    if (data.setsEnabled) parts.push(`Best of ${data.sets} Sets`);
+    if (data.legsEnabled) parts.push(`Best of ${data.legs} Legs`);
+    return parts.length > 0 ? parts.join(' · ') : `${data.startScore}`;
   };
 
   return (
@@ -130,26 +161,28 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
         width: 560,
         fontFamily: "'Arial', sans-serif",
         borderRadius: 6,
-        overflow: 'hidden',
+        overflow: 'visible',
         boxShadow: '0 4px 32px rgba(0,0,0,0.7)',
       }}>
         {data ? (
           <>
-            {/* Header */}
+            {/* Header - Format spec + labels */}
             <div style={{
               background: 'linear-gradient(90deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
               padding: '8px 14px',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
+              borderTopLeftRadius: 6,
+              borderTopRightRadius: 6,
             }}>
-              <span style={{ color: '#ffffff', fontSize: 15, fontWeight: 600 }}>
+              <div style={{ color: '#ffffff', fontSize: 13, fontWeight: 600 }}>
                 {formatSpec()}
-              </span>
+              </div>
               <div style={{ display: 'flex', gap: 28, color: '#aaaaaa', fontSize: 13, fontWeight: 600 }}>
                 {data.setsEnabled && <span>Sets</span>}
                 <span>Legs</span>
-                <span style={{ minWidth: 38, textAlign: 'right' }}></span>
+                <span style={{ minWidth: 54, textAlign: 'right' }}></span>
               </div>
             </div>
 
@@ -160,6 +193,7 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
               legs={data.p1Legs}
               sets={data.p1Sets}
               active={data.p1Active}
+              startedLeg={data.p1StartedLeg}
               setsEnabled={data.setsEnabled}
               isTop
             />
@@ -174,9 +208,23 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
               legs={data.p2Legs}
               sets={data.p2Sets}
               active={data.p2Active}
+              startedLeg={data.p2StartedLeg}
               setsEnabled={data.setsEnabled}
               isTop={false}
             />
+
+            {/* Footer - Tournament name */}
+            <div style={{
+              background: 'linear-gradient(90deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+              padding: '8px 14px',
+              textAlign: 'center',
+              borderBottomLeftRadius: 6,
+              borderBottomRightRadius: 6,
+            }}>
+              <div style={{ color: '#ffffff', fontSize: 13, fontWeight: 600 }}>
+                {data.tournamentName}
+              </div>
+            </div>
           </>
         ) : (
           <div style={{
@@ -200,57 +248,100 @@ interface PlayerRowProps {
   legs: number;
   sets: number;
   active: boolean;
+  startedLeg: boolean;
   setsEnabled: boolean;
   isTop: boolean;
 }
 
-function PlayerRow({ name, score, legs, sets, active, setsEnabled }: PlayerRowProps) {
+function PlayerRow({ name, score, legs, sets, active, startedLeg, setsEnabled }: PlayerRowProps) {
   const checkout = score >= 2 && score <= 170 ? CHECKOUTS[score] : undefined;
 
   return (
-    <div style={{
-      background: active
-        ? 'linear-gradient(90deg, rgba(30,60,120,0.97) 0%, rgba(20,40,90,0.97) 100%)'
-        : 'rgba(10,10,20,0.92)',
-      padding: '10px 14px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 10,
-    }}>
-      {/* Active indicator */}
-      <div style={{
-        width: 4,
-        height: 28,
-        borderRadius: 2,
-        background: active ? '#00aaff' : 'transparent',
-        flexShrink: 0,
-      }} />
-
-      {/* Player name + checkout */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <span style={{
-          color: '#ffffff',
-          fontSize: 20,
-          fontWeight: 700,
-          letterSpacing: '0.01em',
+    <div style={{ position: 'relative', display: 'flex' }}>
+      {/* Checkout bar - slides out to the left */}
+      {checkout && (
+        <div style={{
+          position: 'absolute',
+          right: '100%',
+          top: 0,
+          bottom: 0,
+          background: 'linear-gradient(90deg, #d32f2f 0%, #f44336 100%)',
+          padding: '10px 16px',
+          display: 'flex',
+          alignItems: 'center',
+          borderTopLeftRadius: 6,
+          borderBottomLeftRadius: 6,
+          boxShadow: '-2px 0 8px rgba(0,0,0,0.3)',
+          minWidth: 140,
         }}>
-          {name}
-        </span>
-        {checkout && (
           <span style={{
-            color: '#00e676',
-            fontSize: 12,
-            fontWeight: 600,
+            color: '#ffffff',
+            fontSize: 16,
+            fontWeight: 700,
             fontFamily: 'monospace',
             letterSpacing: '0.05em',
+            whiteSpace: 'nowrap',
           }}>
             {checkout}
           </span>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Sets */}
-      {setsEnabled && (
+      {/* Main player row */}
+      <div style={{
+        background: active
+          ? 'linear-gradient(90deg, rgba(30,60,120,0.97) 0%, rgba(20,40,90,0.97) 100%)'
+          : 'rgba(10,10,20,0.92)',
+        padding: '10px 14px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        flex: 1,
+      }}>
+        {/* Active indicator */}
+        <div style={{
+          width: 4,
+          height: 28,
+          borderRadius: 2,
+          background: active ? '#00aaff' : 'transparent',
+          flexShrink: 0,
+        }} />
+
+        {/* Player name */}
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{
+            color: '#ffffff',
+            fontSize: 20,
+            fontWeight: 700,
+            letterSpacing: '0.01em',
+          }}>
+            {name}
+          </span>
+          {startedLeg && (
+            <span style={{
+              color: '#00e676',
+              fontSize: 16,
+              fontWeight: 900,
+            }}>
+              ●
+            </span>
+          )}
+        </div>
+
+        {/* Sets */}
+        {setsEnabled && (
+          <span style={{
+            color: '#cccccc',
+            fontSize: 20,
+            fontWeight: 600,
+            minWidth: 28,
+            textAlign: 'center',
+          }}>
+            {sets}
+          </span>
+        )}
+
+        {/* Legs */}
         <span style={{
           color: '#cccccc',
           fontSize: 20,
@@ -258,32 +349,21 @@ function PlayerRow({ name, score, legs, sets, active, setsEnabled }: PlayerRowPr
           minWidth: 28,
           textAlign: 'center',
         }}>
-          {sets}
+          {legs}
         </span>
-      )}
 
-      {/* Legs */}
-      <span style={{
-        color: '#cccccc',
-        fontSize: 20,
-        fontWeight: 600,
-        minWidth: 28,
-        textAlign: 'center',
-      }}>
-        {legs}
-      </span>
-
-      {/* Remaining score */}
-      <span style={{
-        color: '#00d4ff',
-        fontSize: 26,
-        fontWeight: 800,
-        minWidth: 54,
-        textAlign: 'right',
-        letterSpacing: '-0.02em',
-      }}>
-        {score}
-      </span>
+        {/* Remaining score */}
+        <span style={{
+          color: '#00d4ff',
+          fontSize: 26,
+          fontWeight: 800,
+          minWidth: 54,
+          textAlign: 'right',
+          letterSpacing: '-0.02em',
+        }}>
+          {score}
+        </span>
+      </div>
     </div>
   );
 }

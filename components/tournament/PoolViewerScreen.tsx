@@ -9,11 +9,19 @@ export function PoolViewerScreen({ id }: { id: string }) {
   const [isHydrated, setIsHydrated] = useState(false);
 
   const tournament = useTournamentStore(state => state.tournaments.find(t => t.id === id));
+  const loadTournament = useTournamentStore(state => state.loadTournament);
   const getStandings = useTournamentStore(state => state.getStandings);
 
   useEffect(() => {
     setIsHydrated(true);
   }, []);
+
+  // Load tournament data from API
+  useEffect(() => {
+    if (isHydrated) {
+      loadTournament(id);
+    }
+  }, [id, isHydrated, loadTournament]);
 
   if (!isHydrated) {
     return (

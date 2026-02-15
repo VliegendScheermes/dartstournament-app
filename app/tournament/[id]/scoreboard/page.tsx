@@ -1,6 +1,9 @@
 'use client';
 
-import { use, useState, useCallback, useEffect, useRef } from 'react';
+import { use, useState, useCallback, useEffect, useRef, FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
+import { soundPlayer } from '@/lib/audio/soundPlayer';
+import { createClient } from '@/lib/auth/supabase';
 
 // Standard darts checkout suggestions (2–170)
 const CHECKOUTS: Record<number, string> = {
@@ -61,6 +64,7 @@ interface PlayerState {
   sets: number;
   history: number[];
   input: string;
+  startedLeg: boolean;
 }
 
 interface GameSettings {
@@ -73,8 +77,8 @@ interface GameSettings {
   p2Link: string;
 }
 
-function makePlayer(name: string, score: number): PlayerState {
-  return { name, score, legs: 0, sets: 0, history: [], input: '' };
+function makePlayer(name: string, score: number, startedLeg: boolean = true): PlayerState {
+  return { name, score, legs: 0, sets: 0, history: [], input: '', startedLeg };
 }
 
 const DEFAULT_SETTINGS: GameSettings = {
@@ -93,20 +97,59 @@ interface ScoreboardPageProps {
 
 export default function ScoreboardPage({ params }: ScoreboardPageProps) {
   const { id } = use(params);
+  const router = useRouter();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [tournamentName, setTournamentName] = useState('Darts Tournament');
   const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
   const [players, setPlayers] = useState<[PlayerState, PlayerState]>([
-    makePlayer('Player One', 501),
-    makePlayer('Player Two', 501),
+    makePlayer('Player One', 501, true),
+    makePlayer('Player Two', 501, false),
   ]);
   const [message, setMessage] = useState('');
-  const [activePlayer, setActivePlayer] = useState<0 | 1 | null>(null);
+  const [activePlayer, setActivePlayer] = useState<0 | 1>(0);
+  const [inputValue, setInputValue] = useState('');
+  const [soundEnabled, setSoundEnabled] = useState(true);
 
   const showMessage = useCallback((msg: string) => {
     setMessage(msg);
     setTimeout(() => setMessage(''), 2000);
   }, []);
+
+  // Load tournament name from database on mount
+  useEffect(() => {
+    const loadTournamentName = async () => {
+      try {
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+
+        const headers: HeadersInit = {
+          'Content-Type': 'application/json',
+        };
+
+        if (session?.access_token) {
+          headers['Authorization'] = `Bearer ${session.access_token}`;
+        }
+
+        const response = await fetch(`/api/tournaments/${id}`, { headers });
+        if (response.ok) {
+          const tournament = await response.json();
+          if (tournament?.tournamentName) {
+            setTournamentName(tournament.tournamentName);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load tournament name:', error);
+      }
+    };
+    loadTournamentName();
+  }, [id]);
+
+  // Preload common sounds on mount
+  useEffect(() => {
+    soundPlayer.preloadCommonSounds();
+    soundPlayer.setEnabled(soundEnabled);
+  }, [soundEnabled]);
 
   const updatePlayer = useCallback((index: 0 | 1, updates: Partial<PlayerState>) => {
     setPlayers(prev => {
@@ -118,10 +161,14 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
 
   const resetGame = () => {
     const s = settings.startScore;
-    setPlayers([makePlayer(players[0].name, s), makePlayer(players[1].name, s)]);
+    setPlayers([makePlayer(players[0].name, s, true), makePlayer(players[1].name, s, false)]);
+    setActivePlayer(0);
   };
 
   const applyScore = useCallback((playerIndex: 0 | 1, score: number) => {
+    // Play score sound
+    soundPlayer.playScore(score);
+
     setPlayers(prev => {
       const player = prev[playerIndex];
       if (score < 0 || score > 180) {
@@ -133,24 +180,40 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
         showMessage('Bust!');
         const next: [PlayerState, PlayerState] = [{ ...prev[0] }, { ...prev[1] }];
         next[playerIndex] = { ...player, input: '' };
+        // Switch to other player
+        setActivePlayer(playerIndex === 0 ? 1 : 0);
         return next;
       }
       if (remaining === 1) {
         showMessage('Bust! (leaves 1)');
         const next: [PlayerState, PlayerState] = [{ ...prev[0] }, { ...prev[1] }];
         next[playerIndex] = { ...player, input: '' };
+        // Switch to other player
+        setActivePlayer(playerIndex === 0 ? 1 : 0);
         return next;
       }
       if (remaining === 0) {
         showMessage(`${player.name} wins the leg! 🎯`);
         const next: [PlayerState, PlayerState] = [{ ...prev[0] }, { ...prev[1] }];
-        next[playerIndex] = {
+        const winner = playerIndex;
+        const otherPlayer = playerIndex === 0 ? 1 : 0;
+        // Winner starts next leg
+        next[winner] = {
           ...player,
           score: settings.startScore,
           legs: player.legs + 1,
           history: [],
           input: '',
+          startedLeg: false,
         };
+        next[otherPlayer] = {
+          ...prev[otherPlayer],
+          score: settings.startScore,
+          history: [],
+          startedLeg: true,
+        };
+        // Other player starts next leg
+        setActivePlayer(otherPlayer);
         return next;
       }
       const next: [PlayerState, PlayerState] = [{ ...prev[0] }, { ...prev[1] }];
@@ -160,6 +223,8 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
         history: [...player.history, score],
         input: '',
       };
+      // Switch to other player
+      setActivePlayer(playerIndex === 0 ? 1 : 0);
       return next;
     });
   }, [showMessage, settings.startScore]);
@@ -300,23 +365,26 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
   // Sync live state to localStorage so OBS overlay can read it
   useEffect(() => {
     localStorage.setItem(`darts-scoreboard-${id}`, JSON.stringify({
+      tournamentName,
       p1Name: players[0].name,
       p1Score: players[0].score,
       p1Legs: players[0].legs,
       p1Sets: players[0].sets,
       p1Active: activePlayer === 0,
+      p1StartedLeg: players[0].startedLeg,
       p2Name: players[1].name,
       p2Score: players[1].score,
       p2Legs: players[1].legs,
       p2Sets: players[1].sets,
       p2Active: activePlayer === 1,
+      p2StartedLeg: players[1].startedLeg,
       startScore: settings.startScore,
       legsEnabled: settings.legsEnabled,
       legs: settings.legs,
       setsEnabled: settings.setsEnabled,
       sets: settings.sets,
     }));
-  }, [players, activePlayer, settings, id]);
+  }, [players, activePlayer, settings, tournamentName, id]);
 
   const handleSettingChange = (field: keyof GameSettings, value: unknown) => {
     setSettings(prev => {
@@ -355,6 +423,23 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
 
         {sidebarOpen && (
           <div className="p-3 space-y-4 text-sm">
+            <div>
+              <label className="block text-gray-400 mb-1">Tournament Name</label>
+              <input
+                type="text"
+                value={tournamentName}
+                onChange={e => setTournamentName(e.target.value)}
+                className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1"
+              />
+            </div>
+
+            <div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={soundEnabled} onChange={e => setSoundEnabled(e.target.checked)} className="accent-green-500" />
+                <span>Sound Effects</span>
+              </label>
+            </div>
+
             <div>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={settings.setsEnabled} onChange={e => handleSettingChange('setsEnabled', e.target.checked)} className="accent-green-500" />
@@ -405,37 +490,88 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
             <button onClick={resetGame} className="w-full py-1.5 rounded bg-red-800 hover:bg-red-700 border border-red-600 text-sm font-semibold">
               Reset Game
             </button>
+
+            <button
+              onClick={() => router.push(`/tournament/${id}/setup`)}
+              className="w-full py-1.5 rounded bg-blue-700 hover:bg-blue-600 border border-blue-600 text-sm font-semibold"
+            >
+              Toernooi Setup
+            </button>
           </div>
         )}
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 flex flex-col min-w-0 p-3 gap-3">
-        {/* Keyboard hint */}
-        <div className="text-xs text-gray-600 text-center">
-          {activePlayer !== null
-            ? `⌨ Keyboard active → ${players[activePlayer].name}`
-            : '⌨ Click a player panel to activate keyboard input'}
+      <main className="flex-1 flex flex-col min-w-0 p-6 gap-6">
+        {/* Header info */}
+        <div className="text-center text-sm text-gray-400">
+          Best of {settings.legsEnabled ? `${settings.legs} legs` : ''}{settings.setsEnabled ? ` • ${settings.sets} sets` : ''}
         </div>
 
         {/* Players row */}
-        <div className="flex-1 grid grid-cols-2 gap-3 min-h-0">
+        <div className="flex-1 grid grid-cols-2 gap-6 min-h-0">
           {([0, 1] as const).map(i => (
-            <PlayerCard
+            <PlayerCardSimple
               key={i}
               player={players[i]}
               isActive={activePlayer === i}
-              onActivate={() => setActivePlayer(i)}
               onNameChange={name => updatePlayer(i, { name })}
-              onKey={key => handleKey(i, key)}
-              onEnter={() => submitActive(i)}
-              onShortcut={score => applyScore(i, score)}
+              onToggleStarter={() => {
+                // Reset leg and set this player as starter and active
+                setPlayers(prev => {
+                  const next: [PlayerState, PlayerState] = [
+                    { ...prev[0], score: settings.startScore, history: [], startedLeg: i === 0 },
+                    { ...prev[1], score: settings.startScore, history: [], startedLeg: i === 1 }
+                  ];
+                  return next;
+                });
+                setActivePlayer(i);
+              }}
             />
           ))}
         </div>
 
+        {/* Central input */}
+        <div className="flex-shrink-0 bg-gray-800 rounded-lg border-2 border-gray-700 p-4">
+          <div className="text-center text-sm text-gray-400 mb-3">
+            {players[activePlayer].name} is aan de beurt
+          </div>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            const score = parseInt(inputValue, 10);
+            if (!isNaN(score) && score >= 0) {
+              applyScore(activePlayer, score);
+              setInputValue('');
+            }
+          }} className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => handleKey(activePlayer, 'undo')}
+              className="px-6 py-4 bg-gray-600 hover:bg-gray-500 rounded-lg text-yellow-300 font-semibold text-lg"
+            >
+              ↩ Undo
+            </button>
+            <input
+              type="number"
+              value={inputValue}
+              onChange={e => setInputValue(e.target.value)}
+              placeholder="Voer score in en druk enter..."
+              className="flex-1 bg-gray-700 border-2 border-gray-600 rounded-lg px-6 py-4 text-center text-2xl font-bold focus:outline-none focus:border-green-500"
+              min="0"
+              max="180"
+              autoFocus
+            />
+            <button
+              type="submit"
+              className="px-8 py-4 bg-green-600 hover:bg-green-500 rounded-lg text-white font-semibold text-lg"
+            >
+              Verzenden
+            </button>
+          </form>
+        </div>
+
         {/* Soundboard placeholder */}
-        <div className="flex-shrink-0 h-24 bg-gray-800 rounded-lg border border-gray-700 flex items-center justify-center">
+        <div className="flex-shrink-0 h-16 bg-gray-800 rounded-lg border border-gray-700 flex items-center justify-center">
           <span className="text-gray-500 text-sm">Soundboard (coming soon)</span>
         </div>
       </main>
@@ -443,83 +579,67 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
   );
 }
 
-interface PlayerCardProps {
+interface PlayerCardSimpleProps {
   player: PlayerState;
   isActive: boolean;
-  onActivate: () => void;
   onNameChange: (name: string) => void;
-  onKey: (key: string) => void;
-  onEnter: () => void;
-  onShortcut: (score: number) => void;
+  onToggleStarter: () => void;
 }
 
-function PlayerCard({ player, isActive, onActivate, onNameChange, onKey, onEnter, onShortcut }: PlayerCardProps) {
+function PlayerCardSimple({ player, isActive, onNameChange, onToggleStarter }: PlayerCardSimpleProps) {
   const checkout = player.score >= 2 && player.score <= 170 ? CHECKOUTS[player.score] : undefined;
-  const btnBase = 'flex items-center justify-center rounded font-bold select-none cursor-pointer active:scale-95 transition-transform';
 
   return (
     <div
-      onClick={onActivate}
-      className={`bg-gray-800 rounded-lg p-3 flex flex-col gap-2 min-h-0 border-2 transition-colors cursor-pointer ${isActive ? 'border-blue-500' : 'border-gray-700 hover:border-gray-600'}`}
+      className={`bg-gray-800 rounded-lg p-4 flex flex-col gap-3 min-h-0 border-2 transition-colors ${isActive ? 'border-green-500' : 'border-gray-700'}`}
     >
-      {/* Player name */}
-      <input
-        type="text"
-        value={player.name}
-        onChange={e => onNameChange(e.target.value)}
-        onClick={e => e.stopPropagation()}
-        className="bg-transparent text-center text-lg font-semibold border-b border-gray-600 focus:outline-none focus:border-green-500 pb-1"
-      />
-
-      {/* Input display */}
-      <div className="text-center text-gray-400 text-sm h-5 tracking-widest">
-        {player.input ? player.input : '· · · · ·'}
+      {/* Player name with start indicator */}
+      <div className="flex items-center justify-center gap-2">
+        <input
+          type="text"
+          value={player.name}
+          onChange={e => onNameChange(e.target.value)}
+          className="bg-transparent text-center text-xl font-bold border-b-2 border-gray-600 focus:outline-none focus:border-green-500 pb-2 flex-1"
+        />
+        <button
+          onClick={onToggleStarter}
+          className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-colors ${player.startedLeg ? 'bg-green-500 border-green-400' : 'bg-gray-700 border-gray-600 hover:bg-gray-600'}`}
+          title="Click to make this player start the leg"
+        >
+          {player.startedLeg && <span className="text-white font-bold">●</span>}
+        </button>
       </div>
 
       {/* Big score */}
-      <div className="text-center text-6xl font-bold leading-none py-1">
+      <div className="text-center text-7xl font-bold leading-none py-2">
         {player.score}
       </div>
 
       {/* Checkout suggestion */}
-      <div className="text-center text-green-400 text-sm h-5 font-mono">
-        {checkout || ''}
-      </div>
-
-      {/* Calculator grid */}
-      <div className="flex-1 grid grid-cols-4 gap-1.5 min-h-0">
-        <button onClick={e => { e.stopPropagation(); onShortcut(180); }} className={`${btnBase} bg-green-700 hover:bg-green-600 text-white`}>180</button>
-        <button onClick={e => { e.stopPropagation(); onKey('1'); }} className={`${btnBase} bg-gray-700 hover:bg-gray-600`}>1</button>
-        <button onClick={e => { e.stopPropagation(); onKey('2'); }} className={`${btnBase} bg-gray-700 hover:bg-gray-600`}>2</button>
-        <button onClick={e => { e.stopPropagation(); onKey('3'); }} className={`${btnBase} bg-gray-700 hover:bg-gray-600`}>3</button>
-
-        <button onClick={e => { e.stopPropagation(); onShortcut(100); }} className={`${btnBase} bg-green-700 hover:bg-green-600 text-white`}>100</button>
-        <button onClick={e => { e.stopPropagation(); onKey('4'); }} className={`${btnBase} bg-gray-700 hover:bg-gray-600`}>4</button>
-        <button onClick={e => { e.stopPropagation(); onKey('5'); }} className={`${btnBase} bg-gray-700 hover:bg-gray-600`}>5</button>
-        <button onClick={e => { e.stopPropagation(); onKey('6'); }} className={`${btnBase} bg-gray-700 hover:bg-gray-600`}>6</button>
-
-        <button onClick={e => { e.stopPropagation(); onShortcut(60); }} className={`${btnBase} bg-green-700 hover:bg-green-600 text-white`}>60</button>
-        <button onClick={e => { e.stopPropagation(); onKey('7'); }} className={`${btnBase} bg-gray-700 hover:bg-gray-600`}>7</button>
-        <button onClick={e => { e.stopPropagation(); onKey('8'); }} className={`${btnBase} bg-gray-700 hover:bg-gray-600`}>8</button>
-        <button onClick={e => { e.stopPropagation(); onKey('9'); }} className={`${btnBase} bg-gray-700 hover:bg-gray-600`}>9</button>
-
-        <button onClick={e => { e.stopPropagation(); onShortcut(26); }} className={`${btnBase} bg-green-700 hover:bg-green-600 text-white`}>26</button>
-        <button onClick={e => { e.stopPropagation(); onKey('undo'); }} className={`${btnBase} bg-gray-600 hover:bg-gray-500 text-yellow-300`}>↩</button>
-        <button onClick={e => { e.stopPropagation(); onKey('0'); }} className={`${btnBase} bg-gray-700 hover:bg-gray-600`}>0</button>
-        <button onClick={e => { e.stopPropagation(); onEnter(); }} className={`${btnBase} bg-blue-700 hover:bg-blue-600 text-white`}>Enter</button>
-      </div>
+      {checkout && (
+        <div className="text-center text-green-400 text-base font-mono">
+          {checkout}
+        </div>
+      )}
 
       {/* Stats row */}
-      <div className="flex gap-4 text-sm text-gray-400 pt-1 border-t border-gray-700">
-        <span>Game: <span className="text-white font-semibold">{player.legs}</span></span>
+      <div className="flex justify-center gap-6 text-base text-gray-400 py-2">
+        <span>Legs: <span className="text-white font-semibold">{player.legs}</span></span>
         <span>Sets: <span className="text-white font-semibold">{player.sets}</span></span>
       </div>
 
       {/* Score history */}
-      <div className="text-xs text-gray-500 flex flex-wrap gap-x-2 max-h-10 overflow-hidden">
-        {player.history.slice(-10).map((s, i) => (
-          <span key={i}>{s}</span>
-        ))}
+      <div className="flex-1 overflow-y-auto min-h-0">
+        <div className="text-sm text-gray-400 mb-2">Score geschiedenis:</div>
+        <div className="space-y-1">
+          {player.history.slice().reverse().map((s, i) => (
+            <div key={i} className="flex justify-between text-sm bg-gray-700 px-3 py-2 rounded">
+              <span className="text-gray-400">#{player.history.length - i}</span>
+              <span className="text-white font-semibold">{s}</span>
+              <span className="text-gray-500">{player.score + player.history.slice(player.history.length - i).reduce((a, b) => a + b, 0)}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
