@@ -202,12 +202,8 @@ export default function FinalsPage({ params }: FinalsPageProps) {
           await updateStatus(id, 'completed');
           return;
         }
-    } catch (error) {
-      console.error('Failed to confirm match:', error);
-      return;
-    }
 
-      // Generate next round with winners
+        // Generate next round with winners
       console.log(`Generating next round (${match.roundIndex + 1}) from ${currentRoundMatches.length} matches`);
 
       // Create updated matches array with scores and confirmation
@@ -277,6 +273,10 @@ export default function FinalsPage({ params }: FinalsPageProps) {
           setMatches(id, [...updatedMatches, ...nextRoundMatches]);
         }
       }
+    }
+    } catch (error) {
+      console.error('Failed to confirm match:', error);
+      return;
     }
   };
 
