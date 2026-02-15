@@ -12,16 +12,6 @@ export function PoolViewerScreen({ id }: { id: string }) {
   const getStandings = useTournamentStore(state => state.getStandings);
 
   useEffect(() => {
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'darts-tournament-storage') {
-        useTournamentStore.persist.rehydrate();
-      }
-    };
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
-  }, []);
-
-  useEffect(() => {
     setIsHydrated(true);
   }, []);
 
