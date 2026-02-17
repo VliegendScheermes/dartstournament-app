@@ -560,7 +560,7 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
                         onChange={e => setBackendVolume(parseInt(e.target.value))}
                         className="slider-vertical"
                         style={{
-                          writingMode: 'bt-lr',
+                          writingMode: 'bt-lr' as React.CSSProperties['writingMode'],
                           WebkitAppearance: 'slider-vertical',
                           width: '8px',
                           height: '110px'
@@ -582,7 +582,7 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
                         onChange={e => setFrontendVolume(parseInt(e.target.value))}
                         className="slider-vertical"
                         style={{
-                          writingMode: 'bt-lr',
+                          writingMode: 'bt-lr' as React.CSSProperties['writingMode'],
                           WebkitAppearance: 'slider-vertical',
                           width: '8px',
                           height: '110px'
