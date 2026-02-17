@@ -81,7 +81,7 @@ export default function SplitViewPage({ params }: SplitViewPageProps) {
         pointerEvents: 'none',
       }} />
 
-      {/* Right half — live tournament content */}
+      {/* Right half — live tournament content fills 960×1080 naturally */}
       <div style={{
         position: 'absolute',
         right: 0,
@@ -92,15 +92,7 @@ export default function SplitViewPage({ params }: SplitViewPageProps) {
         transition: 'opacity 0.35s ease',
         opacity,
       }}>
-        {/* Scale the viewer content to fit 960px wide */}
-        <div style={{
-          width: 1920,
-          height: 1080,
-          transformOrigin: 'top left',
-          transform: 'scale(0.5)',
-        }}>
-          {renderScreen()}
-        </div>
+        {renderScreen()}
       </div>
     </div>
   );
