@@ -112,6 +112,7 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
   const [backendVolume, setBackendVolume] = useState(70); // 0-100
   const [frontendVolume, setFrontendVolume] = useState(70); // 0-100
   const [volumeExpanded, setVolumeExpanded] = useState(true);
+  const [obsExpanded, setObsExpanded] = useState(false);
 
   const showMessage = useCallback((msg: string) => {
     setMessage(msg);
@@ -475,13 +476,34 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
               <input type="text" value={settings.p2Link} onChange={e => handleSettingChange('p2Link', e.target.value)} placeholder="https://..." className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs" />
             </div>
 
+            {/* OBS Links - Collapsible */}
             <div>
-              <button
-                onClick={() => window.open(`/tournament/${id}/obs-overlay`, '_blank')}
-                className="w-full py-1.5 rounded bg-gray-700 border border-gray-600 hover:bg-gray-600 text-xs"
-              >
-                OBS Scoreboard link
-              </button>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={obsExpanded} onChange={e => setObsExpanded(e.target.checked)} className="accent-green-500" />
+                <span>OBS</span>
+              </label>
+              {obsExpanded && (
+                <div className="mt-2 space-y-1.5">
+                  <button
+                    onClick={() => window.open(`/tournament/${id}/obs-overlay`, '_blank')}
+                    className="w-full py-1.5 rounded bg-gray-700 border border-gray-600 hover:bg-gray-600 text-xs text-left px-2"
+                  >
+                    🎯 Scoreboard Overlay
+                  </button>
+                  <button
+                    onClick={() => window.open(`/tournament/${id}/split-view`, '_blank')}
+                    className="w-full py-1.5 rounded bg-gray-700 border border-gray-600 hover:bg-gray-600 text-xs text-left px-2"
+                  >
+                    ◧ Split Screen
+                  </button>
+                  <button
+                    onClick={() => window.open(`/tournament/${id}/live-viewer`, '_blank')}
+                    className="w-full py-1.5 rounded bg-gray-700 border border-gray-600 hover:bg-gray-600 text-xs text-left px-2"
+                  >
+                    📺 Live View
+                  </button>
+                </div>
+              )}
             </div>
 
             <button onClick={resetGame} className="w-full py-1.5 rounded bg-red-800 hover:bg-red-700 border border-red-600 text-sm font-semibold">
