@@ -79,6 +79,7 @@ interface LiveScoreData {
   legs: number;
   setsEnabled: boolean;
   sets: number;
+  frontendVolume?: number;
 }
 
 interface OBSOverlayPageProps {
@@ -88,6 +89,7 @@ interface OBSOverlayPageProps {
 export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
   const { id } = use(params);
   const [data, setData] = useState<LiveScoreData | null>(null);
+  const [audioEnabled, setAudioEnabled] = useState(false);
   const prevP1Score = useRef<number | null>(null);
   const prevP2Score = useRef<number | null>(null);
 
@@ -97,8 +99,14 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
       if (raw) {
         const newData = JSON.parse(raw);
 
+        // Apply frontend volume from scoreboard FIRST (before playing sounds)
+        if (newData.frontendVolume !== undefined) {
+          soundPlayer.setVolume(newData.frontendVolume / 100);
+          soundPlayer.setEnabled(newData.frontendVolume > 0);
+        }
+
         // Detect score changes and play sound
-        if (data) {
+        if (data && audioEnabled) {
           // Player 1 scored
           if (newData.p1Score < data.p1Score && prevP1Score.current !== null) {
             const scoreDiff = prevP1Score.current - newData.p1Score;
@@ -122,17 +130,34 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
     }
   };
 
+  // Enable audio on first interaction
+  const enableAudio = () => {
+    soundPlayer.preloadCommonSounds();
+    setAudioEnabled(true);
+  };
+
   useEffect(() => {
-    // Preload sounds
+    // Try to preload sounds (might be blocked by browser)
     soundPlayer.preloadCommonSounds();
 
+    // Initial read
     readState();
 
+    // Listen to storage events (works when scoreboard is in different browser tab)
     const onStorage = (e: StorageEvent) => {
       if (e.key === `darts-scoreboard-${id}`) readState();
     };
     window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
+
+    // Poll localStorage every 200ms (needed for OBS browser source which doesn't receive storage events)
+    const pollInterval = setInterval(() => {
+      readState();
+    }, 200);
+
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      clearInterval(pollInterval);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -153,6 +178,30 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
       background: 'transparent',
       overflow: 'hidden',
     }}>
+      {/* Audio Enable Button (only shows if audio is disabled) */}
+      {!audioEnabled && (
+        <button
+          onClick={enableAudio}
+          style={{
+            position: 'absolute',
+            top: 20,
+            left: 20,
+            padding: '12px 20px',
+            background: 'rgba(255, 165, 0, 0.9)',
+            color: '#000',
+            border: '2px solid #fff',
+            borderRadius: 8,
+            fontSize: 16,
+            fontWeight: 700,
+            cursor: 'pointer',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+            zIndex: 1000,
+          }}
+        >
+          🔊 Klik om geluid te activeren
+        </button>
+      )}
+
       {/* TV Scoreboard — positioned bottom-right */}
       <div style={{
         position: 'absolute',

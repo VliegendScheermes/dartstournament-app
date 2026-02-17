@@ -109,7 +109,9 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
   const [message, setMessage] = useState('');
   const [activePlayer, setActivePlayer] = useState<0 | 1>(0);
   const [inputValue, setInputValue] = useState('');
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [backendVolume, setBackendVolume] = useState(70); // 0-100
+  const [frontendVolume, setFrontendVolume] = useState(70); // 0-100
+  const [volumeExpanded, setVolumeExpanded] = useState(true);
 
   const showMessage = useCallback((msg: string) => {
     setMessage(msg);
@@ -145,11 +147,12 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
     loadTournamentName();
   }, [id]);
 
-  // Preload common sounds on mount
+  // Preload common sounds and set backend volume
   useEffect(() => {
     soundPlayer.preloadCommonSounds();
-    soundPlayer.setEnabled(soundEnabled);
-  }, [soundEnabled]);
+    soundPlayer.setVolume(backendVolume / 100);
+    soundPlayer.setEnabled(backendVolume > 0);
+  }, [backendVolume]);
 
   const updatePlayer = useCallback((index: 0 | 1, updates: Partial<PlayerState>) => {
     setPlayers(prev => {
@@ -383,8 +386,9 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
       legs: settings.legs,
       setsEnabled: settings.setsEnabled,
       sets: settings.sets,
+      frontendVolume: frontendVolume, // Volume for OBS overlay
     }));
-  }, [players, activePlayer, settings, tournamentName, id]);
+  }, [players, activePlayer, settings, tournamentName, id, frontendVolume]);
 
   const handleSettingChange = (field: keyof GameSettings, value: unknown) => {
     setSettings(prev => {
@@ -431,13 +435,6 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
                 onChange={e => setTournamentName(e.target.value)}
                 className="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1"
               />
-            </div>
-
-            <div>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={soundEnabled} onChange={e => setSoundEnabled(e.target.checked)} className="accent-green-500" />
-                <span>Sound Effects</span>
-              </label>
             </div>
 
             <div>
@@ -490,6 +487,61 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
             <button onClick={resetGame} className="w-full py-1.5 rounded bg-red-800 hover:bg-red-700 border border-red-600 text-sm font-semibold">
               Reset Game
             </button>
+
+            {/* Volume Controls - Collapsible */}
+            <div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={volumeExpanded} onChange={e => setVolumeExpanded(e.target.checked)} className="accent-green-500" />
+                <span>Volume</span>
+              </label>
+              {volumeExpanded && (
+                <div className="mt-3 flex gap-4 justify-center py-2">
+                  {/* Backend Volume */}
+                  <div className="flex flex-col items-center gap-2">
+                    <span className="text-xs text-gray-400">Backend</span>
+                    <div className="flex flex-col-reverse items-center h-32 bg-gray-700 rounded-lg p-1 relative">
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={backendVolume}
+                        onChange={e => setBackendVolume(parseInt(e.target.value))}
+                        className="slider-vertical"
+                        style={{
+                          writingMode: 'bt-lr',
+                          WebkitAppearance: 'slider-vertical',
+                          width: '8px',
+                          height: '110px'
+                        }}
+                      />
+                    </div>
+                    <span className="text-xs text-green-400 font-semibold">{backendVolume}%</span>
+                  </div>
+
+                  {/* Frontend Volume */}
+                  <div className="flex flex-col items-center gap-2">
+                    <span className="text-xs text-gray-400">Frontend</span>
+                    <div className="flex flex-col-reverse items-center h-32 bg-gray-700 rounded-lg p-1 relative">
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={frontendVolume}
+                        onChange={e => setFrontendVolume(parseInt(e.target.value))}
+                        className="slider-vertical"
+                        style={{
+                          writingMode: 'bt-lr',
+                          WebkitAppearance: 'slider-vertical',
+                          width: '8px',
+                          height: '110px'
+                        }}
+                      />
+                    </div>
+                    <span className="text-xs text-green-400 font-semibold">{frontendVolume}%</span>
+                  </div>
+                </div>
+              )}
+            </div>
 
             <button
               onClick={() => router.push(`/tournament/${id}/setup`)}
