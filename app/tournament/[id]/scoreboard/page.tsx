@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useState, useCallback, useEffect, useRef, FormEvent } from 'react';
+import { use, useState, useCallback, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { soundPlayer } from '@/lib/audio/soundPlayer';
 import { createClient } from '@/lib/auth/supabase';
@@ -366,9 +366,22 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  // Sync live state to localStorage so OBS overlay can read it
+  // Sync live state to localStorage (same-browser tab) AND to API (OBS overlay)
+  const apiWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionTokenRef = useRef<string | null>(null);
+
+  // Fetch and cache the session token once on mount
   useEffect(() => {
-    localStorage.setItem(`darts-scoreboard-${id}`, JSON.stringify({
+    const getToken = async () => {
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      sessionTokenRef.current = session?.access_token ?? null;
+    };
+    getToken();
+  }, []);
+
+  useEffect(() => {
+    const payload = {
       tournamentName,
       p1Name: players[0].name,
       p1Score: players[0].score,
@@ -387,8 +400,25 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
       legs: settings.legs,
       setsEnabled: settings.setsEnabled,
       sets: settings.sets,
-      frontendVolume: frontendVolume, // Volume for OBS overlay
-    }));
+      frontendVolume,
+    };
+
+    // Write to localStorage (for same-browser tab fallback)
+    localStorage.setItem(`darts-scoreboard-${id}`, JSON.stringify(payload));
+
+    // Debounced write to API (for OBS overlay cross-browser)
+    if (apiWriteTimerRef.current) clearTimeout(apiWriteTimerRef.current);
+    apiWriteTimerRef.current = setTimeout(() => {
+      if (!sessionTokenRef.current) return;
+      fetch(`/api/tournaments/${id}/live-match`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionTokenRef.current}`,
+        },
+        body: JSON.stringify(payload),
+      }).catch(() => { /* ignore network errors */ });
+    }, 400);
   }, [players, activePlayer, settings, tournamentName, id, frontendVolume]);
 
   const handleSettingChange = (field: keyof GameSettings, value: unknown) => {
@@ -590,6 +620,8 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
               player={players[i]}
               isActive={activePlayer === i}
               onNameChange={name => updatePlayer(i, { name })}
+              onLegsChange={legs => updatePlayer(i, { legs })}
+              onSetsChange={sets => updatePlayer(i, { sets })}
               onToggleStarter={() => {
                 // Reset leg and set this player as starter and active
                 setPlayers(prev => {
@@ -644,24 +676,215 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
           </form>
         </div>
 
-        {/* Soundboard placeholder */}
-        <div className="flex-shrink-0 h-16 bg-gray-800 rounded-lg border border-gray-700 flex items-center justify-center">
-          <span className="text-gray-500 text-sm">Soundboard (coming soon)</span>
-        </div>
+        {/* Soundboard */}
+        <Soundboard />
       </main>
     </div>
   );
 }
 
+// ─── Soundboard ────────────────────────────────────────────────────────────
+
+interface SoundboardEntry {
+  id: string;
+  label: string;
+  src: string;
+}
+
+const SOUNDBOARD_ENTRIES: SoundboardEntry[] = [
+  { id: 'anthem-chants',    label: 'Anthem\nChants',    src: '/sounds/soundboard/anthem-chants.wav' },
+  { id: 'anthem-no-chants', label: 'Anthem\nNo Chants', src: '/sounds/soundboard/anthem-no-chants.wav' },
+  // Add more entries here
+];
+
+interface WalkOnState {
+  label: string;
+  url: string | null;
+  fileName: string | null;
+}
+
+const WALKON_DEFAULTS: WalkOnState[] = [
+  { label: 'Walk-on\nSpeler 1', url: null, fileName: null },
+  { label: 'Walk-on\nSpeler 2', url: null, fileName: null },
+];
+
+function Soundboard() {
+  const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
+  const [playing, setPlaying] = useState<Record<string, boolean>>({});
+
+  // Walk-on state
+  const [walkOns, setWalkOns] = useState<WalkOnState[]>(WALKON_DEFAULTS);
+  const walkOnAudioRefs = useRef<(HTMLAudioElement | null)[]>([null, null]);
+  const walkOnInputRefs = useRef<(HTMLInputElement | null)[]>([null, null]);
+
+  const stopAll = () => {
+    Object.values(audioRefs.current).forEach(a => {
+      if (a) { a.pause(); a.currentTime = 0; }
+    });
+    walkOnAudioRefs.current.forEach(a => {
+      if (a) { a.pause(); a.currentTime = 0; }
+    });
+    setPlaying({});
+  };
+
+  const toggle = (entry: SoundboardEntry) => {
+    let audio = audioRefs.current[entry.id];
+    if (!audio) {
+      audio = new Audio(entry.src);
+      audioRefs.current[entry.id] = audio;
+      audio.addEventListener('ended', () => {
+        setPlaying(prev => ({ ...prev, [entry.id]: false }));
+      });
+    }
+    if (playing[entry.id]) {
+      stopAll();
+    } else {
+      stopAll();
+      audio.currentTime = 0;
+      audio.play().catch(() => {});
+      setPlaying({ [entry.id]: true });
+    }
+  };
+
+  const handleWalkOnUpload = (index: number, file: File) => {
+    // Revoke previous object URL
+    if (walkOns[index].url) URL.revokeObjectURL(walkOns[index].url!);
+    const url = URL.createObjectURL(file);
+    setWalkOns(prev => prev.map((w, i) =>
+      i === index ? { ...w, url, fileName: file.name } : w
+    ));
+    const id = `walkon-${index}`;
+    const audio = new Audio(url);
+    audio.addEventListener('ended', () => setPlaying(p => ({ ...p, [id]: false })));
+    walkOnAudioRefs.current[index] = audio;
+  };
+
+  const toggleWalkOn = (index: number) => {
+    const id = `walkon-${index}`;
+    const audio = walkOnAudioRefs.current[index];
+    if (!audio || !walkOns[index].url) return;
+    if (playing[id]) {
+      stopAll();
+    } else {
+      stopAll();
+      audio.currentTime = 0;
+      audio.play().catch(() => {});
+      setPlaying({ [id]: true });
+    }
+  };
+
+  return (
+    <div className="flex-shrink-0 bg-gray-800 rounded-lg border border-gray-700 p-3 flex items-center gap-4">
+      <span className="text-xs text-gray-500 uppercase tracking-widest select-none">Soundboard</span>
+      <div className="flex gap-3 flex-wrap items-center">
+        {/* Fixed soundboard buttons */}
+        {SOUNDBOARD_ENTRIES.map(entry => (
+          <button
+            key={entry.id}
+            onClick={() => toggle(entry)}
+            title={entry.label.replace('\n', ' ')}
+            className={`w-14 h-14 rounded-full border-2 flex items-center justify-center text-center transition-all select-none ${
+              playing[entry.id]
+                ? 'bg-green-600 border-green-400 shadow-lg shadow-green-900/50 scale-95'
+                : 'bg-gray-700 border-gray-600 hover:bg-gray-600 hover:border-gray-500'
+            }`}
+          >
+            <div className="flex flex-col items-center gap-0.5">
+              <span className="text-[10px] leading-none">{playing[entry.id] ? '■' : '▶'}</span>
+              <span className="text-[8px] leading-tight font-semibold text-white whitespace-pre-line text-center px-1">
+                {entry.label}
+              </span>
+            </div>
+          </button>
+        ))}
+
+        {/* Divider */}
+        <div className="w-px h-10 bg-gray-600 mx-1 self-center" />
+
+        {/* Walk-on buttons */}
+        {walkOns.map((wo, i) => {
+          const id = `walkon-${i}`;
+          const isPlaying = !!playing[id];
+          const hasFile = !!wo.url;
+          return (
+            <div key={id} className="flex flex-col items-center gap-1">
+              <button
+                onClick={() => toggleWalkOn(i)}
+                disabled={!hasFile}
+                title={wo.fileName ?? wo.label.replace('\n', ' ')}
+                className={`w-14 h-14 rounded-full border-2 flex items-center justify-center text-center transition-all select-none ${
+                  isPlaying
+                    ? 'bg-amber-600 border-amber-400 shadow-lg shadow-amber-900/50 scale-95'
+                    : hasFile
+                      ? 'bg-gray-700 border-amber-700 hover:bg-gray-600 hover:border-amber-500'
+                      : 'bg-gray-800 border-gray-700 opacity-40 cursor-default'
+                }`}
+              >
+                <div className="flex flex-col items-center gap-0.5">
+                  <span className="text-[10px] leading-none">{isPlaying ? '■' : '▶'}</span>
+                  <span className="text-[8px] leading-tight font-semibold text-white whitespace-pre-line text-center px-1">
+                    {wo.label}
+                  </span>
+                </div>
+              </button>
+              {/* Upload button */}
+              <button
+                onClick={() => walkOnInputRefs.current[i]?.click()}
+                title={hasFile ? `Huidig: ${wo.fileName}\nKlik om te vervangen` : 'Upload MP3 of WAV'}
+                className="text-[9px] text-gray-500 hover:text-amber-400 transition-colors leading-none select-none"
+              >
+                {hasFile ? '↑ vervangen' : '↑ upload'}
+              </button>
+              <input
+                ref={el => { walkOnInputRefs.current[i] = el; }}
+                type="file"
+                accept=".mp3,.wav,audio/mpeg,audio/wav"
+                className="hidden"
+                onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (file) handleWalkOnUpload(i, file);
+                  e.target.value = '';
+                }}
+              />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Player Card ────────────────────────────────────────────────────────────
+
 interface PlayerCardSimpleProps {
   player: PlayerState;
   isActive: boolean;
   onNameChange: (name: string) => void;
+  onLegsChange: (legs: number) => void;
+  onSetsChange: (sets: number) => void;
   onToggleStarter: () => void;
 }
 
-function PlayerCardSimple({ player, isActive, onNameChange, onToggleStarter }: PlayerCardSimpleProps) {
+function PlayerCardSimple({ player, isActive, onNameChange, onLegsChange, onSetsChange, onToggleStarter }: PlayerCardSimpleProps) {
   const checkout = player.score >= 2 && player.score <= 170 ? CHECKOUTS[player.score] : undefined;
+  const [editingField, setEditingField] = useState<'legs' | 'sets' | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const editInputRef = useRef<HTMLInputElement>(null);
+
+  const startEdit = (field: 'legs' | 'sets') => {
+    setEditingField(field);
+    setEditValue(String(field === 'legs' ? player.legs : player.sets));
+    setTimeout(() => { editInputRef.current?.select(); }, 0);
+  };
+
+  const commitEdit = () => {
+    const val = parseInt(editValue, 10);
+    if (!isNaN(val) && val >= 0) {
+      if (editingField === 'legs') onLegsChange(val);
+      else if (editingField === 'sets') onSetsChange(val);
+    }
+    setEditingField(null);
+  };
 
   return (
     <div
@@ -696,10 +919,36 @@ function PlayerCardSimple({ player, isActive, onNameChange, onToggleStarter }: P
         </div>
       )}
 
-      {/* Stats row */}
+      {/* Stats row — double-click legs or sets to edit */}
       <div className="flex justify-center gap-6 text-base text-gray-400 py-2">
-        <span>Legs: <span className="text-white font-semibold">{player.legs}</span></span>
-        <span>Sets: <span className="text-white font-semibold">{player.sets}</span></span>
+        {(['legs', 'sets'] as const).map(field => (
+          <span key={field}>
+            {field === 'legs' ? 'Legs' : 'Sets'}:{' '}
+            {editingField === field ? (
+              <input
+                ref={editInputRef}
+                type="number"
+                min={0}
+                value={editValue}
+                onChange={e => setEditValue(e.target.value)}
+                onBlur={commitEdit}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+                  if (e.key === 'Escape') setEditingField(null);
+                }}
+                className="w-12 bg-gray-600 border border-green-500 rounded px-1 text-center text-white font-semibold text-sm focus:outline-none"
+              />
+            ) : (
+              <span
+                className="text-white font-semibold cursor-pointer hover:text-green-400 transition-colors"
+                onDoubleClick={() => startEdit(field)}
+                title={`Dubbelklik om ${field} te bewerken`}
+              >
+                {player[field]}
+              </span>
+            )}
+          </span>
+        ))}
       </div>
 
       {/* Score history */}

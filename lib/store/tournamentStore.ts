@@ -50,6 +50,7 @@ interface TournamentStore {
   // API Loading Actions
   loadTournaments: () => Promise<void>;
   loadTournament: (id: string) => Promise<void>;
+  loadTournamentPublic: (id: string) => Promise<void>;
 
   // Actions
   createTournament: (name?: string) => Promise<string>;
@@ -157,6 +158,31 @@ export const useTournamentStore = create<TournamentStore>()((set, get) => ({
       }));
     } catch (error: any) {
       set({ error: error.message, isLoading: false });
+    }
+  },
+
+  // Load single tournament from public API (no authentication required)
+  // Used by viewer pages accessible to anyone (live-viewer, split-view, OBS sources)
+  loadTournamentPublic: async (id: string) => {
+    try {
+      const response = await fetch(`/api/tournaments/${id}/public`);
+      if (!response.ok) {
+        if (response.status === 404) {
+          set({ error: 'Tournament not found' });
+          return;
+        }
+        throw new Error(`API error: ${response.statusText}`);
+      }
+      const apiTournament: ApiTournament = await response.json();
+      const tournament = apiToTournament(apiTournament);
+
+      set((state) => ({
+        tournaments: state.tournaments.some(t => t.id === id)
+          ? state.tournaments.map((t) => (t.id === id ? tournament : t))
+          : [...state.tournaments, tournament],
+      }));
+    } catch (error: any) {
+      set({ error: error.message });
     }
   },
 

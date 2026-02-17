@@ -92,43 +92,8 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
   const [audioEnabled, setAudioEnabled] = useState(false);
   const prevP1Score = useRef<number | null>(null);
   const prevP2Score = useRef<number | null>(null);
-
-  const readState = () => {
-    try {
-      const raw = localStorage.getItem(`darts-scoreboard-${id}`);
-      if (raw) {
-        const newData = JSON.parse(raw);
-
-        // Apply frontend volume from scoreboard FIRST (before playing sounds)
-        if (newData.frontendVolume !== undefined) {
-          soundPlayer.setVolume(newData.frontendVolume / 100);
-          soundPlayer.setEnabled(newData.frontendVolume > 0);
-        }
-
-        // Detect score changes and play sound
-        if (data && audioEnabled) {
-          // Player 1 scored
-          if (newData.p1Score < data.p1Score && prevP1Score.current !== null) {
-            const scoreDiff = prevP1Score.current - newData.p1Score;
-            soundPlayer.playScore(scoreDiff);
-          }
-          // Player 2 scored
-          if (newData.p2Score < data.p2Score && prevP2Score.current !== null) {
-            const scoreDiff = prevP2Score.current - newData.p2Score;
-            soundPlayer.playScore(scoreDiff);
-          }
-        }
-
-        // Update previous scores
-        prevP1Score.current = newData.p1Score;
-        prevP2Score.current = newData.p2Score;
-
-        setData(newData);
-      }
-    } catch {
-      // ignore parse errors
-    }
-  };
+  const audioEnabledRef = useRef(audioEnabled);
+  audioEnabledRef.current = audioEnabled;
 
   // Enable audio on first interaction
   const enableAudio = () => {
@@ -137,28 +102,46 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
   };
 
   useEffect(() => {
-    // Try to preload sounds (might be blocked by browser)
     soundPlayer.preloadCommonSounds();
 
-    // Initial read
-    readState();
+    const pollApi = async () => {
+      try {
+        const response = await fetch(`/api/tournaments/${id}/live-match`);
+        if (!response.ok) return;
+        const newData: LiveScoreData | null = await response.json();
 
-    // Listen to storage events (works when scoreboard is in different browser tab)
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === `darts-scoreboard-${id}`) readState();
+        if (newData) {
+          // Apply frontend volume FIRST (before playing sounds)
+          if (newData.frontendVolume !== undefined) {
+            soundPlayer.setVolume(newData.frontendVolume / 100);
+            soundPlayer.setEnabled(newData.frontendVolume > 0);
+          }
+
+          // Detect score changes and play sound (use refs to avoid stale closure)
+          if (audioEnabledRef.current) {
+            if (prevP1Score.current !== null && newData.p1Score < prevP1Score.current) {
+              soundPlayer.playScore(prevP1Score.current - newData.p1Score);
+            }
+            if (prevP2Score.current !== null && newData.p2Score < prevP2Score.current) {
+              soundPlayer.playScore(prevP2Score.current - newData.p2Score);
+            }
+          }
+
+          prevP1Score.current = newData.p1Score;
+          prevP2Score.current = newData.p2Score;
+          setData(newData);
+        } else {
+          setData(null);
+        }
+      } catch {
+        // ignore network errors
+      }
     };
-    window.addEventListener('storage', onStorage);
 
-    // Poll localStorage every 200ms (needed for OBS browser source which doesn't receive storage events)
-    const pollInterval = setInterval(() => {
-      readState();
-    }, 200);
-
-    return () => {
-      window.removeEventListener('storage', onStorage);
-      clearInterval(pollInterval);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Initial fetch + poll every 1s (works in OBS browser source, any browser, cross-device)
+    pollApi();
+    const interval = setInterval(pollApi, 1000);
+    return () => clearInterval(interval);
   }, [id]);
 
   const formatSpec = () => {
@@ -178,7 +161,7 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
       background: 'transparent',
       overflow: 'hidden',
     }}>
-      {/* Audio Enable Button (only shows if audio is disabled) */}
+      {/* Audio Enable Button */}
       {!audioEnabled && (
         <button
           onClick={enableAudio}
@@ -186,15 +169,16 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
             position: 'absolute',
             top: 20,
             left: 20,
-            padding: '12px 20px',
-            background: 'rgba(255, 165, 0, 0.9)',
-            color: '#000',
-            border: '2px solid #fff',
-            borderRadius: 8,
-            fontSize: 16,
+            padding: '10px 18px',
+            background: 'rgba(0, 77, 48, 0.95)',
+            color: '#d4af37',
+            border: '2px solid #d4af37',
+            borderRadius: 6,
+            fontSize: 14,
             fontWeight: 700,
+            fontFamily: 'Georgia, serif',
             cursor: 'pointer',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.7)',
             zIndex: 1000,
           }}
         >
@@ -202,88 +186,144 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
         </button>
       )}
 
-      {/* TV Scoreboard — positioned bottom-right */}
+      {/* Country Club Scoreboard — bottom-right */}
+      {/* Outer wrapper: overflow visible so checkout bar can extend left */}
       <div style={{
         position: 'absolute',
-        bottom: 80,
-        right: 48,
-        width: 560,
-        fontFamily: "'Arial', sans-serif",
-        borderRadius: 6,
-        overflow: 'visible',
-        boxShadow: '0 4px 32px rgba(0,0,0,0.7)',
+        bottom: 72,
+        right: 56,
+        width: 580,
+        fontFamily: 'Georgia, serif',
       }}>
         {data ? (
           <>
-            {/* Header - Format spec + labels */}
+            {/* Checkout bar — positioned on outer wrapper (overflow visible), skip header ~41px, each row ~57px */}
+            {(() => {
+              const activeScore = data.p1Active ? data.p1Score : data.p2Score;
+              const checkout = activeScore >= 2 && activeScore <= 170 ? CHECKOUTS[activeScore] : undefined;
+              if (!checkout) return null;
+              const topOffset = 41 + (data.p2Active ? 58 : 0);
+              return (
+                <div style={{
+                  position: 'absolute',
+                  right: '100%',
+                  top: topOffset,
+                  height: 57,
+                  background: '#004d30',
+                  border: '3px solid #d4af37',
+                  borderRight: 'none',
+                  padding: '0 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  borderTopLeftRadius: 6,
+                  borderBottomLeftRadius: 6,
+                  boxShadow: '-4px 0 12px rgba(0,0,0,0.7), 0 0 16px rgba(212,175,55,0.25)',
+                  minWidth: 150,
+                }}>
+                  <span style={{
+                    color: '#d4af37',
+                    fontSize: 15,
+                    fontWeight: 700,
+                    fontFamily: 'Georgia, serif',
+                    letterSpacing: '0.06em',
+                    whiteSpace: 'nowrap',
+                    textShadow: '0 0 10px rgba(212,175,55,0.5)',
+                  }}>
+                    {checkout}
+                  </span>
+                </div>
+              );
+            })()}
+
+            {/* Inner scoreboard: overflow hidden clips rows cleanly to border-radius */}
             <div style={{
-              background: 'linear-gradient(90deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
-              padding: '8px 14px',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              borderTopLeftRadius: 6,
-              borderTopRightRadius: 6,
+              borderRadius: 8,
+              border: '3px solid #d4af37',
+              overflow: 'hidden',
+              boxShadow: '0 0 40px rgba(212,175,55,0.3), 0 16px 48px rgba(0,0,0,0.95)',
             }}>
-              <div style={{ color: '#ffffff', fontSize: 13, fontWeight: 600 }}>
-                {formatSpec()}
+              {/* Header */}
+              <div style={{
+                background: '#004d30',
+                padding: '10px 16px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                borderBottom: '1px solid rgba(212,175,55,0.4)',
+              }}>
+                <span style={{
+                  color: '#d4af37',
+                  fontSize: 13,
+                  fontWeight: 700,
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  textShadow: '0 0 8px rgba(212,175,55,0.4)',
+                }}>
+                  🎯 {data.tournamentName}
+                </span>
+                <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
+                  {data.setsEnabled && (
+                    <span style={{ color: 'rgba(212,175,55,0.55)', fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Sets</span>
+                  )}
+                  <span style={{ color: 'rgba(212,175,55,0.55)', fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Legs</span>
+                  <span style={{ color: 'rgba(212,175,55,0.55)', fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', minWidth: 52, textAlign: 'right' }}>Score</span>
+                </div>
               </div>
-              <div style={{ display: 'flex', gap: 28, color: '#aaaaaa', fontSize: 13, fontWeight: 600 }}>
-                {data.setsEnabled && <span>Sets</span>}
-                <span>Legs</span>
-                <span style={{ minWidth: 54, textAlign: 'right' }}></span>
-              </div>
-            </div>
 
-            {/* Player 1 row */}
-            <PlayerRow
-              name={data.p1Name}
-              score={data.p1Score}
-              legs={data.p1Legs}
-              sets={data.p1Sets}
-              active={data.p1Active}
-              startedLeg={data.p1StartedLeg}
-              setsEnabled={data.setsEnabled}
-              isTop
-            />
+              {/* Player 1 */}
+              <PlayerRow
+                name={data.p1Name}
+                score={data.p1Score}
+                legs={data.p1Legs}
+                sets={data.p1Sets}
+                active={data.p1Active}
+                startedLeg={data.p1StartedLeg}
+                setsEnabled={data.setsEnabled}
+                isTop
+              />
 
-            {/* Divider */}
-            <div style={{ height: 1, background: 'rgba(255,255,255,0.08)' }} />
+              {/* Solid divider — no transparency */}
+              <div style={{ height: 1, background: '#002d1a' }} />
 
-            {/* Player 2 row */}
-            <PlayerRow
-              name={data.p2Name}
-              score={data.p2Score}
-              legs={data.p2Legs}
-              sets={data.p2Sets}
-              active={data.p2Active}
-              startedLeg={data.p2StartedLeg}
-              setsEnabled={data.setsEnabled}
-              isTop={false}
-            />
+              {/* Player 2 */}
+              <PlayerRow
+                name={data.p2Name}
+                score={data.p2Score}
+                legs={data.p2Legs}
+                sets={data.p2Sets}
+                active={data.p2Active}
+                startedLeg={data.p2StartedLeg}
+                setsEnabled={data.setsEnabled}
+                isTop={false}
+              />
 
-            {/* Footer - Tournament name */}
-            <div style={{
-              background: 'linear-gradient(90deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
-              padding: '8px 14px',
-              textAlign: 'center',
-              borderBottomLeftRadius: 6,
-              borderBottomRightRadius: 6,
-            }}>
-              <div style={{ color: '#ffffff', fontSize: 13, fontWeight: 600 }}>
-                {data.tournamentName}
-              </div>
+              {/* Footer — format spec */}
+              {formatSpec() && (
+                <div style={{
+                  background: '#003d26',
+                  padding: '6px 16px',
+                  textAlign: 'center',
+                  borderTop: '1px solid rgba(212,175,55,0.25)',
+                }}>
+                  <span style={{ color: 'rgba(212,175,55,0.6)', fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', fontFamily: 'Georgia, serif' }}>
+                    {formatSpec()}
+                  </span>
+                </div>
+              )}
             </div>
           </>
         ) : (
           <div style={{
-            background: 'rgba(10,10,20,0.92)',
-            padding: '16px 20px',
-            color: 'rgba(255,255,255,0.3)',
-            fontSize: 14,
+            borderRadius: 8,
+            border: '3px solid #d4af37',
+            background: '#004d30',
+            padding: '20px 24px',
             textAlign: 'center',
+            boxShadow: '0 0 40px rgba(212,175,55,0.3), 0 16px 48px rgba(0,0,0,0.95)',
           }}>
-            Waiting for scoreboard...
+            <p style={{ color: 'rgba(212,175,55,0.5)', fontSize: 14, fontFamily: 'Georgia, serif', margin: 0, letterSpacing: '0.1em' }}>
+              Waiting for scoreboard...
+            </p>
           </div>
         )}
       </div>
@@ -303,116 +343,77 @@ interface PlayerRowProps {
 }
 
 function PlayerRow({ name, score, legs, sets, active, startedLeg, setsEnabled }: PlayerRowProps) {
-  const checkout = score >= 2 && score <= 170 ? CHECKOUTS[score] : undefined;
-
   return (
-    <div style={{ position: 'relative', display: 'flex' }}>
-      {/* Checkout bar - slides out to the left */}
-      {checkout && (
-        <div style={{
-          position: 'absolute',
-          right: '100%',
-          top: 0,
-          bottom: 0,
-          background: 'linear-gradient(90deg, #d32f2f 0%, #f44336 100%)',
-          padding: '10px 16px',
-          display: 'flex',
-          alignItems: 'center',
-          borderTopLeftRadius: 6,
-          borderBottomLeftRadius: 6,
-          boxShadow: '-2px 0 8px rgba(0,0,0,0.3)',
-          minWidth: 140,
+    <div style={{
+      background: active ? '#004d30' : '#001d0e',
+      padding: '13px 16px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
+      transition: 'background 0.4s ease',
+      // No borderRadius — parent overflow:hidden handles corner clipping
+    }}>
+      {/* Player name + leg-starter indicator */}
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{
+          color: active ? '#fdf5e6' : 'rgba(253,245,230,0.5)',
+          fontSize: 22,
+          fontWeight: 700,
+          fontFamily: 'Georgia, serif',
+          textShadow: active ? '0 1px 4px rgba(0,0,0,0.6)' : 'none',
+          transition: 'color 0.4s ease',
         }}>
-          <span style={{
-            color: '#ffffff',
-            fontSize: 16,
-            fontWeight: 700,
-            fontFamily: 'monospace',
-            letterSpacing: '0.05em',
-            whiteSpace: 'nowrap',
-          }}>
-            {checkout}
-          </span>
-        </div>
-      )}
-
-      {/* Main player row */}
-      <div style={{
-        background: active
-          ? 'linear-gradient(90deg, rgba(30,60,120,0.97) 0%, rgba(20,40,90,0.97) 100%)'
-          : 'rgba(10,10,20,0.92)',
-        padding: '10px 14px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        flex: 1,
-      }}>
-        {/* Active indicator */}
-        <div style={{
-          width: 4,
-          height: 28,
-          borderRadius: 2,
-          background: active ? '#00aaff' : 'transparent',
-          flexShrink: 0,
-        }} />
-
-        {/* Player name */}
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{
-            color: '#ffffff',
-            fontSize: 20,
-            fontWeight: 700,
-            letterSpacing: '0.01em',
-          }}>
-            {name}
-          </span>
-          {startedLeg && (
-            <span style={{
-              color: '#00e676',
-              fontSize: 16,
-              fontWeight: 900,
-            }}>
-              ●
-            </span>
-          )}
-        </div>
-
-        {/* Sets */}
-        {setsEnabled && (
-          <span style={{
-            color: '#cccccc',
-            fontSize: 20,
-            fontWeight: 600,
-            minWidth: 28,
-            textAlign: 'center',
-          }}>
-            {sets}
+          {name}
+        </span>
+        {startedLeg && (
+          <span style={{ color: active ? '#d4af37' : 'rgba(212,175,55,0.35)', fontSize: 10, lineHeight: 1, transition: 'color 0.4s ease' }}>
+            ▶
           </span>
         )}
+      </div>
 
-        {/* Legs */}
+      {/* Sets */}
+      {setsEnabled && (
         <span style={{
-          color: '#cccccc',
+          color: active ? '#d4af37' : 'rgba(212,175,55,0.35)',
           fontSize: 20,
-          fontWeight: 600,
+          fontWeight: 700,
+          fontFamily: 'Georgia, serif',
           minWidth: 28,
           textAlign: 'center',
+          transition: 'color 0.4s ease',
         }}>
-          {legs}
+          {sets}
         </span>
+      )}
 
-        {/* Remaining score */}
-        <span style={{
-          color: '#00d4ff',
-          fontSize: 26,
-          fontWeight: 800,
-          minWidth: 54,
-          textAlign: 'right',
-          letterSpacing: '-0.02em',
-        }}>
-          {score}
-        </span>
-      </div>
+      {/* Legs */}
+      <span style={{
+        color: active ? '#d4af37' : 'rgba(212,175,55,0.35)',
+        fontSize: 20,
+        fontWeight: 700,
+        fontFamily: 'Georgia, serif',
+        minWidth: 28,
+        textAlign: 'center',
+        transition: 'color 0.4s ease',
+      }}>
+        {legs}
+      </span>
+
+      {/* Remaining score */}
+      <span style={{
+        color: active ? '#d4af37' : 'rgba(253,245,230,0.4)',
+        fontSize: 30,
+        fontWeight: 800,
+        fontFamily: 'Georgia, serif',
+        minWidth: 62,
+        textAlign: 'right',
+        letterSpacing: '-0.02em',
+        textShadow: active ? '0 0 16px rgba(212,175,55,0.5)' : 'none',
+        transition: 'color 0.4s ease, text-shadow 0.4s ease',
+      }}>
+        {score}
+      </span>
     </div>
   );
 }

@@ -9,19 +9,20 @@ export function PoolViewerScreen({ id }: { id: string }) {
   const [isHydrated, setIsHydrated] = useState(false);
 
   const tournament = useTournamentStore(state => state.tournaments.find(t => t.id === id));
-  const loadTournament = useTournamentStore(state => state.loadTournament);
+  const loadTournamentPublic = useTournamentStore(state => state.loadTournamentPublic);
   const getStandings = useTournamentStore(state => state.getStandings);
 
   useEffect(() => {
     setIsHydrated(true);
   }, []);
 
-  // Load tournament data from API
+  // Load tournament data from public API and poll every 3s for live updates
   useEffect(() => {
-    if (isHydrated) {
-      loadTournament(id);
-    }
-  }, [id, isHydrated, loadTournament]);
+    if (!isHydrated) return;
+    loadTournamentPublic(id);
+    const interval = setInterval(() => loadTournamentPublic(id), 3000);
+    return () => clearInterval(interval);
+  }, [id, isHydrated, loadTournamentPublic]);
 
   if (!isHydrated) {
     return (
