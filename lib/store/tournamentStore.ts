@@ -439,7 +439,12 @@ export const useTournamentStore = create<TournamentStore>()((set, get) => ({
         }));
 
         try {
-          await apiClient.put(`/tournaments/${tournamentId}/pools`, { pools });
+          // API expects pool.players:[{playerId}] but store uses pool.playerIds:string[]
+          const apiPools = pools.map(pool => ({
+            ...pool,
+            players: pool.playerIds.map(playerId => ({ playerId })),
+          }));
+          await apiClient.put(`/tournaments/${tournamentId}/pools`, { pools: apiPools });
         } catch (error: any) {
           await get().loadTournament(tournamentId);
           throw error;
