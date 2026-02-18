@@ -99,7 +99,7 @@ export const PoolDisplay: React.FC<PoolDisplayProps> = ({
             currentPickedPoolId: initialPools[poolIndex].id,
           });
 
-          // Wait a moment, then add name to pool
+          // Hold "picking" for 2500ms so draw viewer (polling at 500ms) reliably catches it
           setTimeout(() => {
             // Add player to the accumulating pools
             const updatedPools = currentPools.map((pool, idx) => {
@@ -121,12 +121,12 @@ export const PoolDisplay: React.FC<PoolDisplayProps> = ({
               currentPickedPlayerId: player.id,
               currentPickedPoolId: initialPools[poolIndex].id,
             });
-          }, 800);
+          }, 2500);
 
           // Hide big animation after a moment
           setTimeout(() => {
             setShowAnimation(false);
-          }, 1500);
+          }, 2000);
         }
       );
 

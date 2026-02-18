@@ -22,11 +22,11 @@ export function DrawViewerScreen({ id }: { id: string }) {
     setIsHydrated(true);
   }, []);
 
-  // Load tournament data from public API and poll every 3s for live updates
+  // Poll at 500ms during draw — 'picking' state only lasts ~2.5s, must not be missed
   useEffect(() => {
     if (!isHydrated) return;
     loadTournamentPublic(id);
-    const interval = setInterval(() => loadTournamentPublic(id), 3000);
+    const interval = setInterval(() => loadTournamentPublic(id), 500);
     return () => clearInterval(interval);
   }, [id, isHydrated, loadTournamentPublic]);
 
