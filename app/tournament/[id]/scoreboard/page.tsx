@@ -113,6 +113,9 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
   const [frontendVolume, setFrontendVolume] = useState(70); // 0-100
   const [volumeExpanded, setVolumeExpanded] = useState(true);
   const [obsExpanded, setObsExpanded] = useState(false);
+  const [barneyAnim, setBarneyAnim] = useState<{ src: string; key: number } | null>(null);
+
+  const playBarney = (src: string) => setBarneyAnim({ src, key: Date.now() });
 
   const showMessage = useCallback((msg: string) => {
     setMessage(msg);
@@ -606,7 +609,15 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 flex flex-col min-w-0 p-6 gap-6">
+      <main className="flex-1 flex flex-col min-w-0 p-6 gap-6 relative overflow-hidden">
+        {/* Barney animation overlay */}
+        {barneyAnim && (
+          <BarneyOverlay
+            key={barneyAnim.key}
+            src={barneyAnim.src}
+            onDone={() => setBarneyAnim(null)}
+          />
+        )}
         {/* Header info */}
         <div className="text-center text-sm text-gray-400">
           Best of {settings.legsEnabled ? `${settings.legs} legs` : ''}{settings.setsEnabled ? ` • ${settings.sets} sets` : ''}
@@ -678,6 +689,9 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
 
         {/* Soundboard */}
         <Soundboard />
+
+        {/* Barney Controls */}
+        <BarneyControls onPlay={playBarney} />
       </main>
     </div>
   );
@@ -849,6 +863,94 @@ function Soundboard() {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Barney Overlay ─────────────────────────────────────────────────────────
+
+function BarneyOverlay({ src, onDone }: { src: string; onDone: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onDone, 3200);
+    return () => clearTimeout(t);
+  }, [onDone]);
+
+  return (
+    <>
+      <style>{`
+        @keyframes barney-pop {
+          0%   { transform: scale(0)    rotate(0deg);    opacity: 0; }
+          18%  { transform: scale(1.12) rotate(390deg);  opacity: 1; }
+          28%  { transform: scale(1)    rotate(360deg);  opacity: 1; }
+          68%  { transform: scale(1)    rotate(360deg);  opacity: 1; }
+          88%  { transform: scale(0.6)  rotate(360deg);  opacity: 0.6; }
+          100% { transform: scale(0)    rotate(360deg);  opacity: 0; }
+        }
+      `}</style>
+      <div style={{
+        position: 'absolute', inset: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        pointerEvents: 'none', zIndex: 50,
+      }}>
+        <img
+          src={src}
+          alt="Barney"
+          style={{
+            width: 380, height: 380, objectFit: 'contain',
+            animation: 'barney-pop 3.2s ease-in-out forwards',
+            filter: 'drop-shadow(0 0 40px rgba(0,0,0,0.85))',
+          }}
+        />
+      </div>
+    </>
+  );
+}
+
+// ─── Barney Controls ─────────────────────────────────────────────────────────
+
+const BARNEY_WIN = [
+  { src: '/barney/win-1.png', label: 'Win 1' },
+  { src: '/barney/win-2.png', label: 'Win 2' },
+  { src: '/barney/win-3.png', label: 'Win 3' },
+];
+
+const BARNEY_SAD = [
+  { src: '/barney/sad-1.png', label: 'Lose 1' },
+  { src: '/barney/sad-2.png', label: 'Lose 2' },
+  { src: '/barney/sad-3.png', label: 'Lose 3' },
+];
+
+function BarneyControls({ onPlay }: { onPlay: (src: string) => void }) {
+  return (
+    <div className="flex-shrink-0 bg-gray-800 rounded-lg border border-gray-700 p-3 flex items-center gap-4">
+      <span className="text-xs text-gray-500 uppercase tracking-widest select-none">Barney</span>
+      <div className="flex gap-3 flex-wrap items-center">
+        {/* Win buttons */}
+        {BARNEY_WIN.map(b => (
+          <button
+            key={b.src}
+            onClick={() => onPlay(b.src)}
+            title={b.label}
+            className="w-14 h-14 rounded-full border-2 border-green-600 overflow-hidden hover:border-green-400 hover:scale-105 transition-all select-none"
+          >
+            <img src={b.src} alt={b.label} className="w-full h-full object-cover" />
+          </button>
+        ))}
+
+        <div className="w-px h-10 bg-gray-600 mx-1 self-center" />
+
+        {/* Sad/lose buttons */}
+        {BARNEY_SAD.map(b => (
+          <button
+            key={b.src}
+            onClick={() => onPlay(b.src)}
+            title={b.label}
+            className="w-14 h-14 rounded-full border-2 border-red-700 overflow-hidden hover:border-red-500 hover:scale-105 transition-all select-none"
+          >
+            <img src={b.src} alt={b.label} className="w-full h-full object-cover" />
+          </button>
+        ))}
       </div>
     </div>
   );
