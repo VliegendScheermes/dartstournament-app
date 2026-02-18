@@ -29,10 +29,18 @@ export default function SplitViewPage({ params }: SplitViewPageProps) {
   const [opacity, setOpacity] = useState(1);
 
   const tournament = useTournamentStore(state => state.tournaments.find(t => t.id === id));
+  const loadTournamentPublic = useTournamentStore(state => state.loadTournamentPublic);
 
   useEffect(() => {
     setIsHydrated(true);
   }, []);
+
+  // Poll public API every 3s (no auth required — works for OBS, public viewers)
+  useEffect(() => {
+    loadTournamentPublic(id);
+    const interval = setInterval(() => loadTournamentPublic(id), 3000);
+    return () => clearInterval(interval);
+  }, [id, loadTournamentPublic]);
 
   // Fade transition on status change (skip initial render)
   useEffect(() => {

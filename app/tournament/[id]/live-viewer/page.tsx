@@ -19,10 +19,18 @@ export default function LiveViewerPage({ params }: LiveViewerPageProps) {
 
   // Single source of truth: backend tournament status
   const tournament = useTournamentStore(state => state.tournaments.find(t => t.id === id));
+  const loadTournamentPublic = useTournamentStore(state => state.loadTournamentPublic);
 
   useEffect(() => {
     setIsHydrated(true);
   }, []);
+
+  // Poll public API every 3s (no auth required — works for OBS, public viewers)
+  useEffect(() => {
+    loadTournamentPublic(id);
+    const interval = setInterval(() => loadTournamentPublic(id), 3000);
+    return () => clearInterval(interval);
+  }, [id, loadTournamentPublic]);
 
   useEffect(() => {
     setDebugMode(new URLSearchParams(window.location.search).get('debug') === '1');
