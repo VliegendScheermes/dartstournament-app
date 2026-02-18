@@ -404,6 +404,7 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
       setsEnabled: settings.setsEnabled,
       sets: settings.sets,
       frontendVolume,
+      barneyFrame: barneyAnim ? { src: barneyAnim.src, ts: barneyAnim.key } : null,
     };
 
     // Write to localStorage (for same-browser tab fallback)
@@ -422,7 +423,7 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
         body: JSON.stringify(payload),
       }).catch(() => { /* ignore network errors */ });
     }, 400);
-  }, [players, activePlayer, settings, tournamentName, id, frontendVolume]);
+  }, [players, activePlayer, settings, tournamentName, id, frontendVolume, barneyAnim]);
 
   const handleSettingChange = (field: keyof GameSettings, value: unknown) => {
     setSettings(prev => {
@@ -610,14 +611,6 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
 
       {/* Main content */}
       <main className="flex-1 flex flex-col min-w-0 p-6 gap-6 relative overflow-hidden">
-        {/* Barney animation overlay */}
-        {barneyAnim && (
-          <BarneyOverlay
-            key={barneyAnim.key}
-            src={barneyAnim.src}
-            onDone={() => setBarneyAnim(null)}
-          />
-        )}
         {/* Header info */}
         <div className="text-center text-sm text-gray-400">
           Best of {settings.legsEnabled ? `${settings.legs} legs` : ''}{settings.setsEnabled ? ` • ${settings.sets} sets` : ''}

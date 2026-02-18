@@ -80,6 +80,7 @@ interface LiveScoreData {
   setsEnabled: boolean;
   sets: number;
   frontendVolume?: number;
+  barneyFrame?: { src: string; ts: number } | null;
 }
 
 interface OBSOverlayPageProps {
@@ -90,8 +91,10 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
   const { id } = use(params);
   const [data, setData] = useState<LiveScoreData | null>(null);
   const [audioEnabled, setAudioEnabled] = useState(false);
+  const [barneyAnim, setBarneyAnim] = useState<{ src: string; key: number } | null>(null);
   const prevP1Score = useRef<number | null>(null);
   const prevP2Score = useRef<number | null>(null);
+  const prevBarneyTs = useRef<number | null>(null);
   const audioEnabledRef = useRef(audioEnabled);
   audioEnabledRef.current = audioEnabled;
 
@@ -129,6 +132,13 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
 
           prevP1Score.current = newData.p1Score;
           prevP2Score.current = newData.p2Score;
+
+          // Detect new barney trigger
+          if (newData.barneyFrame && newData.barneyFrame.ts !== prevBarneyTs.current) {
+            prevBarneyTs.current = newData.barneyFrame.ts;
+            setBarneyAnim({ src: newData.barneyFrame.src, key: newData.barneyFrame.ts });
+          }
+
           setData(newData);
         } else {
           setData(null);
@@ -161,6 +171,15 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
       background: 'transparent',
       overflow: 'hidden',
     }}>
+      {/* Barney animation overlay */}
+      {barneyAnim && (
+        <BarneyOverlay
+          key={barneyAnim.key}
+          src={barneyAnim.src}
+          onDone={() => setBarneyAnim(null)}
+        />
+      )}
+
       {/* Audio Enable Button */}
       {!audioEnabled && (
         <button
@@ -328,6 +347,45 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
         )}
       </div>
     </div>
+  );
+}
+
+// ─── Barney Overlay ─────────────────────────────────────────────────────────
+
+function BarneyOverlay({ src, onDone }: { src: string; onDone: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onDone, 3200);
+    return () => clearTimeout(t);
+  }, [onDone]);
+
+  return (
+    <>
+      <style>{`
+        @keyframes barney-pop {
+          0%   { transform: scale(0)    rotate(0deg);    opacity: 0; }
+          18%  { transform: scale(1.12) rotate(390deg);  opacity: 1; }
+          28%  { transform: scale(1)    rotate(360deg);  opacity: 1; }
+          68%  { transform: scale(1)    rotate(360deg);  opacity: 1; }
+          88%  { transform: scale(0.6)  rotate(360deg);  opacity: 0.6; }
+          100% { transform: scale(0)    rotate(360deg);  opacity: 0; }
+        }
+      `}</style>
+      <div style={{
+        position: 'absolute', inset: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        pointerEvents: 'none', zIndex: 100,
+      }}>
+        <img
+          src={src}
+          alt="Barney"
+          style={{
+            width: 500, height: 500, objectFit: 'contain',
+            animation: 'barney-pop 3.2s ease-in-out forwards',
+            filter: 'drop-shadow(0 0 60px rgba(0,0,0,0.9))',
+          }}
+        />
+      </div>
+    </>
   );
 }
 
