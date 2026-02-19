@@ -53,8 +53,8 @@ export const MatchSchedule: React.FC<MatchScheduleProps> = ({
   };
 
   const getPoolName = (match: Match): string => {
-    const poolLetter = match.poolId;
-    return `Poule ${poolLetter}`;
+    if (!match.poolId) return 'Pool match';
+    return `Poule ${match.poolId}`;
   };
 
   const handleScoreChange = (matchId: string, player: 'p1' | 'p2', value: string) => {

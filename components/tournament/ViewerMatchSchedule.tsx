@@ -30,8 +30,8 @@ export const ViewerMatchSchedule: React.FC<ViewerMatchScheduleProps> = ({
   };
 
   const getPoolName = (match: Match): string => {
-    const poolLetter = match.poolId;
-    return `Poule ${poolLetter}`;
+    if (!match.poolId) return 'Pool match';
+    return `Poule ${match.poolId}`;
   };
 
   return (

@@ -54,6 +54,13 @@ export class ApiClient {
     })
   }
 
+  async patch<T = any>(path: string, data: any): Promise<T> {
+    return this.fetch<T>(path, {
+      method: 'PATCH',
+      body: JSON.stringify(data)
+    })
+  }
+
   async delete<T = any>(path: string): Promise<T> {
     return this.fetch<T>(path, { method: 'DELETE' })
   }

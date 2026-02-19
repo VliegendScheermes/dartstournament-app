@@ -134,12 +134,15 @@ export async function PUT(
     const body = await request.json()
     const matches = body.matches || []
 
-    // Use transaction to update matches
+    // Replace all matches atomically: delete existing, then bulk-create new ones.
+    // Using upsert was wrong because each "Start Tournament" generates fresh UUIDs,
+    // so old matches were never matched and accumulated indefinitely.
     await prisma.$transaction(async (tx) => {
-      for (const match of matches) {
-        await tx.match.upsert({
-          where: { id: match.id },
-          create: {
+      await tx.match.deleteMany({ where: { tournamentId: id } })
+
+      if (matches.length > 0) {
+        await tx.match.createMany({
+          data: matches.map((match: any) => ({
             id: match.id,
             tournamentId: id,
             roundIndex: match.roundIndex,
@@ -147,22 +150,11 @@ export async function PUT(
             stage: match.stage,
             player1Id: match.player1Id,
             player2Id: match.player2Id,
-            legsP1: match.legsP1 || null,
-            legsP2: match.legsP2 || null,
-            confirmed: match.confirmed || false,
-            boardNumber: match.boardNumber || null
-          },
-          update: {
-            roundIndex: match.roundIndex,
-            poolId: match.poolId || null,
-            stage: match.stage,
-            player1Id: match.player1Id,
-            player2Id: match.player2Id,
-            legsP1: match.legsP1 !== undefined ? match.legsP1 : undefined,
-            legsP2: match.legsP2 !== undefined ? match.legsP2 : undefined,
-            confirmed: match.confirmed !== undefined ? match.confirmed : undefined,
-            boardNumber: match.boardNumber !== undefined ? match.boardNumber : undefined
-          }
+            legsP1: match.legsP1 ?? null,
+            legsP2: match.legsP2 ?? null,
+            confirmed: match.confirmed ?? false,
+            boardNumber: match.boardNumber ?? null,
+          }))
         })
       }
     })

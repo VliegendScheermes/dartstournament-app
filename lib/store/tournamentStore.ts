@@ -469,10 +469,9 @@ export const useTournamentStore = create<TournamentStore>()((set, get) => ({
         }));
 
         try {
-          const tournament = get().getTournament(tournamentId);
-          if (tournament) {
-            await apiClient.put(`/tournaments/${tournamentId}/pools`, { pools: tournament.pools });
-          }
+          // Use PATCH on the individual pool to avoid the batch PUT which deletes+recreates
+          // all pools and nulls out all match.poolId FK fields via onDelete: SetNull.
+          await apiClient.patch(`/tournaments/${tournamentId}/pools/${poolId}`, updates);
         } catch (error: any) {
           await get().loadTournament(tournamentId);
           throw error;
