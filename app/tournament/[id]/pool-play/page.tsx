@@ -115,11 +115,11 @@ export default function PoolPlayPage({ params }: PoolPlayPageProps) {
     }
   };
 
-  const handleBoardNumberChange = async (poolId: string, boardNumber: number | null) => {
+  const handleBoardNumbersChange = async (poolId: string, boardNumbersText: string) => {
     try {
-      await updatePool(id, poolId, { boardNumber });
+      await updatePool(id, poolId, { boardNumbersText });
     } catch (error) {
-      console.error('Failed to update board number:', error);
+      console.error('Failed to update board numbers:', error);
     }
   };
 
@@ -292,8 +292,8 @@ export default function PoolPlayPage({ params }: PoolPlayPageProps) {
                       standings={standings}
                       topPlayers={tournament.settings.advanceToCrossFinals}
                       bottomPlayers={tournament.settings.advanceToLosersFinal}
-                      boardNumber={pool.boardNumber}
-                      onBoardNumberChange={handleBoardNumberChange}
+                      boardNumbersText={pool.boardNumbersText}
+                      onBoardNumbersChange={handleBoardNumbersChange}
                     />
                   );
                 })}

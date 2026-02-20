@@ -6,14 +6,14 @@
 'use client';
 
 import React from 'react';
-import { StandingsRow } from '@/types/tournament';
+import { StandingsRow, Pool, getPoolBoardNumbers } from '@/types/tournament';
 
 interface ViewerStandingsTableProps {
   poolName: string;
   standings: StandingsRow[];
   topPlayers: number;
   bottomPlayers: number;
-  boardNumber?: number | null;
+  pool: Pool;  // Pass full pool to get board numbers
 }
 
 export const ViewerStandingsTable: React.FC<ViewerStandingsTableProps> = ({
@@ -21,8 +21,12 @@ export const ViewerStandingsTable: React.FC<ViewerStandingsTableProps> = ({
   standings,
   topPlayers,
   bottomPlayers,
-  boardNumber,
+  pool,
 }) => {
+  const boards = getPoolBoardNumbers(pool);
+  const boardsLabel = boards.length > 0
+    ? `Board${boards.length > 1 ? 's' : ''} ${boards.join(', ')}`
+    : 'No boards';
   return (
     <div className="rounded-lg p-4" style={{
       background: '#004d30',

@@ -3,7 +3,7 @@
  * Generates round-robin tournament schedules using the circle method
  */
 
-import { Match, Pool, Round } from '@/types/tournament';
+import { Match, Pool, Round, getPoolBoardNumbers } from '@/types/tournament';
 import { v4 as uuidv4 } from 'uuid';
 
 /**
@@ -34,6 +34,10 @@ export function generateRoundRobinMatches(
   const players = isOdd ? [...originalPlayers, 'BYE'] : [...originalPlayers];
   const n = players.length;
   const numRounds = n - 1;
+
+  // Get board numbers for this pool (supports "1,2,3" or "1-4" format)
+  const poolBoards = getPoolBoardNumbers(pool);
+  let matchIndex = 0;
 
   // Circle method: position 0 is fixed, others rotate
   for (let round = 0; round < numRounds; round++) {
@@ -74,6 +78,12 @@ export function generateRoundRobinMatches(
       }
 
       const matchId = uuidv4();
+
+      // Distribute matches across pool's assigned boards (round-robin)
+      const assignedBoard = poolBoards.length > 0
+        ? poolBoards[matchIndex % poolBoards.length]
+        : null;
+
       const newMatch: Match = {
         id: matchId,
         roundIndex: round + 1,
@@ -84,11 +94,12 @@ export function generateRoundRobinMatches(
         legsP1: null,
         legsP2: null,
         confirmed: false,
-        boardNumber: pool.boardNumber,
+        boardNumber: assignedBoard,
       };
 
       matches.push(newMatch);
       roundMatches.push(matchId);
+      matchIndex++; // Increment for next board selection
     }
 
     if (roundMatches.length > 0) {

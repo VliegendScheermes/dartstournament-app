@@ -37,7 +37,47 @@ export interface Pool {
   id: string;
   name: string;
   playerIds: string[];
-  boardNumber?: number | null;
+  boardNumber?: number | null;          // Legacy: single board
+  boardNumbersText?: string | null;     // Flexible: "1", "1,2,3", or "1-4"
+}
+
+// Parse board numbers from text (e.g., "1,2,3" or "1-4" or "1,3-5")
+export function parseBoardNumbers(text: string | null | undefined): number[] {
+  if (!text || text.trim() === '') return [];
+
+  const parts = text.split(',').map(p => p.trim());
+  const numbers: number[] = [];
+
+  for (const part of parts) {
+    if (part.includes('-')) {
+      // Range: "1-4" → [1,2,3,4]
+      const [start, end] = part.split('-').map(n => parseInt(n.trim()));
+      if (!isNaN(start) && !isNaN(end) && start <= end) {
+        for (let i = start; i <= end; i++) {
+          numbers.push(i);
+        }
+      }
+    } else {
+      // Single number: "1" → [1]
+      const num = parseInt(part);
+      if (!isNaN(num)) {
+        numbers.push(num);
+      }
+    }
+  }
+
+  return [...new Set(numbers)].sort((a, b) => a - b); // Remove duplicates and sort
+}
+
+// Get board numbers for a pool (prefers boardNumbersText, falls back to boardNumber)
+export function getPoolBoardNumbers(pool: Pool): number[] {
+  if (pool.boardNumbersText) {
+    return parseBoardNumbers(pool.boardNumbersText);
+  }
+  if (pool.boardNumber != null) {
+    return [pool.boardNumber];
+  }
+  return [];
 }
 
 // Match Stage

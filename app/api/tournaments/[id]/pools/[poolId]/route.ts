@@ -30,6 +30,7 @@ export async function PATCH(
       where: { id: poolId },
       data: {
         ...(body.boardNumber !== undefined && { boardNumber: body.boardNumber }),
+        ...(body.boardNumbersText !== undefined && { boardNumbersText: body.boardNumbersText }),
         ...(body.name !== undefined && { name: body.name }),
       }
     })
