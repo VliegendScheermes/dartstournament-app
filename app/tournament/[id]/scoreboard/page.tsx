@@ -159,12 +159,13 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
     loadTournamentName();
   }, [id]);
 
-  // Preload common sounds and set backend volume
+  // Preload common sounds on mount and set initial volume
   useEffect(() => {
     soundPlayer.preloadCommonSounds();
     soundPlayer.setVolume(backendVolume / 100);
     soundPlayer.setEnabled(backendVolume > 0);
-  }, [backendVolume]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const updatePlayer = useCallback((index: 0 | 1, updates: Partial<PlayerState>) => {
     setPlayers(prev => {
@@ -559,46 +560,39 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
                 <span>Volume</span>
               </label>
               {volumeExpanded && (
-                <div className="mt-3 flex gap-4 justify-center py-2">
-                  {/* Backend Volume */}
+                <div className="mt-3 flex gap-6 justify-center py-2">
+                  {/* Backend Volume — controls laptop sound */}
                   <div className="flex flex-col items-center gap-2">
-                    <span className="text-xs text-gray-400">Backend</span>
-                    <div className="flex flex-col-reverse items-center h-32 bg-gray-700 rounded-lg p-1 relative">
+                    <span className="text-xs text-gray-400">Backend 💻</span>
+                    <div className="h-32 flex items-center justify-center overflow-hidden" style={{ width: '24px' }}>
                       <input
                         type="range"
                         min="0"
                         max="100"
                         value={backendVolume}
-                        onChange={e => setBackendVolume(parseInt(e.target.value))}
-                        className="slider-vertical"
-                        style={{
-                          writingMode: 'bt-lr' as React.CSSProperties['writingMode'],
-                          WebkitAppearance: 'slider-vertical',
-                          width: '8px',
-                          height: '110px'
+                        onChange={e => {
+                          const val = parseInt(e.target.value);
+                          setBackendVolume(val);
+                          soundPlayer.setVolume(val / 100);
+                          soundPlayer.setEnabled(val > 0);
                         }}
+                        style={{ transform: 'rotate(-90deg)', width: '110px', cursor: 'pointer' }}
                       />
                     </div>
                     <span className="text-xs text-green-400 font-semibold">{backendVolume}%</span>
                   </div>
 
-                  {/* Frontend Volume */}
+                  {/* Frontend Volume — controls OBS sound */}
                   <div className="flex flex-col items-center gap-2">
-                    <span className="text-xs text-gray-400">Frontend</span>
-                    <div className="flex flex-col-reverse items-center h-32 bg-gray-700 rounded-lg p-1 relative">
+                    <span className="text-xs text-gray-400">OBS 📺</span>
+                    <div className="h-32 flex items-center justify-center overflow-hidden" style={{ width: '24px' }}>
                       <input
                         type="range"
                         min="0"
                         max="100"
                         value={frontendVolume}
                         onChange={e => setFrontendVolume(parseInt(e.target.value))}
-                        className="slider-vertical"
-                        style={{
-                          writingMode: 'bt-lr' as React.CSSProperties['writingMode'],
-                          WebkitAppearance: 'slider-vertical',
-                          width: '8px',
-                          height: '110px'
-                        }}
+                        style={{ transform: 'rotate(-90deg)', width: '110px', cursor: 'pointer' }}
                       />
                     </div>
                     <span className="text-xs text-green-400 font-semibold">{frontendVolume}%</span>
