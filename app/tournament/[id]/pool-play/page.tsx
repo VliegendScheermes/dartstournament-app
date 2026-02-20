@@ -32,6 +32,8 @@ export default function PoolPlayPage({ params }: PoolPlayPageProps) {
     updatePool,
     setMatches,
     setRounds,
+    setFinalsAssignment,
+    getFinalsAssignment,
     isLoading,
     error,
   } = useTournamentStore();
@@ -115,7 +117,7 @@ export default function PoolPlayPage({ params }: PoolPlayPageProps) {
     }
   };
 
-  const handleBoardNumberChange = async (poolId: string, boardNumber: number | null) => {
+  const handleBoardNumberChange = async (poolId: string, boardNumber: string | null) => {
     try {
       await updatePool(id, poolId, { boardNumber });
     } catch (error) {
@@ -161,6 +163,14 @@ export default function PoolPlayPage({ params }: PoolPlayPageProps) {
       router.push(`/tournament/${id}/finals`);
     } catch (error) {
       console.error('Failed to start finals:', error);
+    }
+  };
+
+  const handleFinalsAssignmentChange = async (playerId: string, assignment: 'CROSS' | 'LOSERS' | 'ELIMINATED' | null) => {
+    try {
+      await setFinalsAssignment(id, playerId, assignment);
+    } catch (error) {
+      console.error('Failed to set finals assignment:', error);
     }
   };
 
@@ -222,8 +232,10 @@ export default function PoolPlayPage({ params }: PoolPlayPageProps) {
 
             <div className="flex items-center gap-2">
               {/* Live View Icon */}
-              <button
-                onClick={() => router.push(`/tournament/${id}/live-viewer`)}
+              <a
+                href={`/tournament/${id}/live-viewer`}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="p-2 rounded-lg hover:bg-gray-200 transition-colors"
                 aria-label="Live View"
               >
@@ -240,7 +252,7 @@ export default function PoolPlayPage({ params }: PoolPlayPageProps) {
                     d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
                   />
                 </svg>
-              </button>
+              </a>
 
               {/* Settings Icon */}
               <button
@@ -294,6 +306,9 @@ export default function PoolPlayPage({ params }: PoolPlayPageProps) {
                       bottomPlayers={tournament.settings.advanceToLosersFinal}
                       boardNumber={pool.boardNumber}
                       onBoardNumberChange={handleBoardNumberChange}
+                      tournamentId={id}
+                      onFinalsAssignmentChange={handleFinalsAssignmentChange}
+                      getFinalsAssignment={(playerId) => getFinalsAssignment(id, playerId)}
                     />
                   );
                 })}
@@ -309,6 +324,7 @@ export default function PoolPlayPage({ params }: PoolPlayPageProps) {
               matches={tournament.matches}
               rounds={tournament.rounds}
               players={tournament.players}
+              tournamentId={id}
               onMatchUpdate={handleMatchUpdate}
               onMatchConfirm={handleMatchConfirm}
               onMatchEdit={handleMatchEdit}

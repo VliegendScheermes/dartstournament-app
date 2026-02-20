@@ -13,7 +13,8 @@ interface ViewerStandingsTableProps {
   standings: StandingsRow[];
   topPlayers: number;
   bottomPlayers: number;
-  boardNumber?: number | null;
+  boardNumber?: string | null;
+  manualAssignments?: { [playerId: string]: 'CROSS' | 'LOSERS' | 'ELIMINATED' | null };
 }
 
 export const ViewerStandingsTable: React.FC<ViewerStandingsTableProps> = ({
@@ -22,6 +23,7 @@ export const ViewerStandingsTable: React.FC<ViewerStandingsTableProps> = ({
   topPlayers,
   bottomPlayers,
   boardNumber,
+  manualAssignments = {},
 }) => {
   return (
     <div className="rounded-lg p-4" style={{
@@ -77,8 +79,26 @@ export const ViewerStandingsTable: React.FC<ViewerStandingsTableProps> = ({
           <tbody>
             {standings.map((row, index) => {
               const position = index + 1;
-              const isTopPlayer = position <= topPlayers;
-              const isBottomPlayer = position > standings.length - bottomPlayers;
+              const manualAssignment = manualAssignments[row.playerId];
+
+              // Determine badge based on manual assignment or automatic logic
+              let badge = null;
+              if (manualAssignment === 'CROSS') {
+                badge = 'Winners';
+              } else if (manualAssignment === 'LOSERS') {
+                badge = 'Losers';
+              } else if (manualAssignment === 'ELIMINATED') {
+                badge = null;
+              } else {
+                // No manual assignment - use automatic logic
+                const isTopPlayer = position <= topPlayers;
+                const isBottomPlayer = position > standings.length - bottomPlayers;
+                if (isTopPlayer) {
+                  badge = 'Winners';
+                } else if (isBottomPlayer) {
+                  badge = 'Losers';
+                }
+              }
 
               return (
                 <tr key={row.playerId} style={{
@@ -95,24 +115,24 @@ export const ViewerStandingsTable: React.FC<ViewerStandingsTableProps> = ({
                     fontFamily: 'Georgia, serif'
                   }}>
                     {row.playerName}
-                    {isTopPlayer && (
+                    {badge === 'Winners' && (
                       <span className="ml-2 text-xs px-2 py-0.5 rounded font-semibold" style={{
                         background: 'rgba(67, 160, 71, 0.6)',
                         color: '#fdf5e6',
                         border: '1px solid #d4af37',
                         fontFamily: 'Georgia, serif'
                       }}>
-                        Advances
+                        Winners
                       </span>
                     )}
-                    {isBottomPlayer && (
+                    {badge === 'Losers' && (
                       <span className="ml-2 text-xs px-2 py-0.5 rounded font-semibold" style={{
                         background: 'rgba(255, 111, 0, 0.6)',
                         color: '#fdf5e6',
                         border: '1px solid #d4af37',
                         fontFamily: 'Georgia, serif'
                       }}>
-                        Advances
+                        Losers
                       </span>
                     )}
                   </td>
@@ -144,10 +164,10 @@ export const ViewerStandingsTable: React.FC<ViewerStandingsTableProps> = ({
         opacity: 0.8
       }}>
         {topPlayers > 0 && bottomPlayers > 0 && (
-          <span>Top {topPlayers} advance to Cross Finals • Bottom {bottomPlayers} to Losers Bracket</span>
+          <span>Top {topPlayers} to Winners • Bottom {bottomPlayers} to Losers</span>
         )}
         {topPlayers > 0 && bottomPlayers === 0 && (
-          <span>Top {topPlayers} advance to Cross Finals</span>
+          <span>Top {topPlayers} to Winners</span>
         )}
       </div>
     </div>

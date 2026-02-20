@@ -90,19 +90,10 @@ interface OBSOverlayPageProps {
 export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
   const { id } = use(params);
   const [data, setData] = useState<LiveScoreData | null>(null);
-  const [audioEnabled, setAudioEnabled] = useState(false);
   const [barneyAnim, setBarneyAnim] = useState<{ src: string; key: number } | null>(null);
   const prevP1Score = useRef<number | null>(null);
   const prevP2Score = useRef<number | null>(null);
   const prevBarneyTs = useRef<number | null>(null);
-  const audioEnabledRef = useRef(audioEnabled);
-  audioEnabledRef.current = audioEnabled;
-
-  // Enable audio on first interaction
-  const enableAudio = () => {
-    soundPlayer.preloadCommonSounds();
-    setAudioEnabled(true);
-  };
 
   useEffect(() => {
     soundPlayer.preloadCommonSounds();
@@ -120,14 +111,12 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
             soundPlayer.setEnabled(newData.frontendVolume > 0);
           }
 
-          // Detect score changes and play sound (use refs to avoid stale closure)
-          if (audioEnabledRef.current) {
-            if (prevP1Score.current !== null && newData.p1Score < prevP1Score.current) {
-              soundPlayer.playScore(prevP1Score.current - newData.p1Score);
-            }
-            if (prevP2Score.current !== null && newData.p2Score < prevP2Score.current) {
-              soundPlayer.playScore(prevP2Score.current - newData.p2Score);
-            }
+          // Detect score changes and play sound
+          if (prevP1Score.current !== null && newData.p1Score < prevP1Score.current) {
+            soundPlayer.playScore(prevP1Score.current - newData.p1Score);
+          }
+          if (prevP2Score.current !== null && newData.p2Score < prevP2Score.current) {
+            soundPlayer.playScore(prevP2Score.current - newData.p2Score);
           }
 
           prevP1Score.current = newData.p1Score;
@@ -178,31 +167,6 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
           src={barneyAnim.src}
           onDone={() => setBarneyAnim(null)}
         />
-      )}
-
-      {/* Audio Enable Button */}
-      {!audioEnabled && (
-        <button
-          onClick={enableAudio}
-          style={{
-            position: 'absolute',
-            top: 20,
-            left: 20,
-            padding: '10px 18px',
-            background: 'rgba(0, 77, 48, 0.95)',
-            color: '#d4af37',
-            border: '2px solid #d4af37',
-            borderRadius: 6,
-            fontSize: 14,
-            fontWeight: 700,
-            fontFamily: 'Georgia, serif',
-            cursor: 'pointer',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.7)',
-            zIndex: 1000,
-          }}
-        >
-          🔊 Klik om geluid te activeren
-        </button>
       )}
 
       {/* Country Club Scoreboard — bottom-right */}

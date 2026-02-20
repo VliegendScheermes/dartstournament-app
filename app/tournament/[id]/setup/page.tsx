@@ -171,8 +171,10 @@ export default function SetupPage({ params }: SetupPageProps) {
 
             <div className="flex items-center gap-2">
               {/* Live View Icon */}
-              <button
-                onClick={() => router.push(`/tournament/${id}/live-viewer`)}
+              <a
+                href={`/tournament/${id}/live-viewer`}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
                 aria-label="Live View"
               >
@@ -189,7 +191,7 @@ export default function SetupPage({ params }: SetupPageProps) {
                     d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
                   />
                 </svg>
-              </button>
+              </a>
 
               {/* Settings Icon Dropdown */}
               <div className="relative settings-dropdown-container">
@@ -232,24 +234,24 @@ export default function SetupPage({ params }: SetupPageProps) {
                   >
                     Profile
                   </button>
-                  <button
-                    onClick={() => {
-                      setShowSettingsDropdown(false);
-                      router.push(`/tournament/${id}/scoreboard`);
-                    }}
-                    className="w-full text-left px-4 py-2 hover:bg-gray-100 text-gray-700 transition-colors"
+                  <a
+                    href={`/tournament/${id}/scoreboard`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => setShowSettingsDropdown(false)}
+                    className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-gray-700 transition-colors"
                   >
                     Scoreboard
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowSettingsDropdown(false);
-                      router.push(`/tournament/${id}/video`);
-                    }}
-                    className="w-full text-left px-4 py-2 hover:bg-gray-100 text-gray-700 transition-colors"
+                  </a>
+                  <a
+                    href={`/tournament/${id}/video`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => setShowSettingsDropdown(false)}
+                    className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-gray-700 transition-colors"
                   >
                     Video
-                  </button>
+                  </a>
                 </div>
               )}
               </div>

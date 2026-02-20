@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client'
 
+// Force reconnection after schema change
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }

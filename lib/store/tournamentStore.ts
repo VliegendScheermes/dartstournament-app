@@ -88,6 +88,11 @@ interface TournamentStore {
   // Status Actions
   updateStatus: (id: string, status: Tournament['status']) => Promise<void>;
 
+  // Finals Assignment Actions
+  setFinalsAssignment: (tournamentId: string, playerId: string, assignment: 'CROSS' | 'LOSERS' | 'ELIMINATED' | null) => Promise<void>;
+  getFinalsAssignment: (tournamentId: string, playerId: string) => 'CROSS' | 'LOSERS' | 'ELIMINATED' | null;
+  clearFinalsAssignments: (tournamentId: string) => Promise<void>;
+
   // Selectors
   getTournament: (id: string) => Tournament | undefined;
   getCurrentTournament: () => Tournament | undefined;
@@ -519,10 +524,8 @@ export const useTournamentStore = create<TournamentStore>()((set, get) => ({
         }));
 
         try {
-          const tournament = get().getTournament(tournamentId);
-          if (tournament) {
-            await apiClient.put(`/tournaments/${tournamentId}/matches`, { matches: tournament.matches });
-          }
+          // Use PATCH endpoint for single match update instead of replacing all matches
+          await apiClient.patch(`/tournaments/${tournamentId}/matches/${matchId}`, updates);
         } catch (error: any) {
           await get().loadTournament(tournamentId);
           throw error;
@@ -622,6 +625,46 @@ export const useTournamentStore = create<TournamentStore>()((set, get) => ({
       // Update status
       updateStatus: async (id, status) => {
         await get().updateTournament(id, { status });
+      },
+
+      // Set manual finals assignment for a player
+      setFinalsAssignment: async (tournamentId, playerId, assignment: 'CROSS' | 'LOSERS' | 'ELIMINATED' | null) => {
+        const tournament = get().getTournament(tournamentId);
+        if (!tournament) return;
+
+        const drawState = tournament.drawState || {};
+        const finalsAssignments = drawState.finalsAssignments || {};
+
+        if (assignment === null) {
+          delete finalsAssignments[playerId];
+        } else {
+          finalsAssignments[playerId] = assignment;
+        }
+
+        await get().updateDrawState(tournamentId, {
+          ...drawState,
+          finalsAssignments,
+        });
+      },
+
+      // Get manual finals assignment for a player
+      getFinalsAssignment: (tournamentId, playerId): 'CROSS' | 'LOSERS' | 'ELIMINATED' | null => {
+        const tournament = get().getTournament(tournamentId);
+        if (!tournament || !tournament.drawState) return null;
+
+        const finalsAssignments = tournament.drawState.finalsAssignments || {};
+        return finalsAssignments[playerId] || null;
+      },
+
+      // Clear all manual finals assignments
+      clearFinalsAssignments: async (tournamentId) => {
+        const tournament = get().getTournament(tournamentId);
+        if (!tournament) return;
+
+        const drawState = tournament.drawState || {};
+        delete drawState.finalsAssignments;
+
+        await get().updateDrawState(tournamentId, drawState);
       },
 
       // Get tournament by ID

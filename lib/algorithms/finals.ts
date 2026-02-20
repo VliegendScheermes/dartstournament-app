@@ -8,41 +8,55 @@ import { v4 as uuidv4 } from 'uuid';
 
 /**
  * Select finalists from pool standings
+ * Respects manual assignments if provided
  */
 export function selectFinalists(
   pools: Pool[],
   allStandings: { [poolId: string]: StandingsRow[] },
   topCount: number,
-  bottomCount: number
+  bottomCount: number,
+  manualAssignments?: { [playerId: string]: 'CROSS' | 'LOSERS' | 'ELIMINATED' | null }
 ): {
   crossFinalists: { poolId: string; playerId: string; rank: number }[];
   losersFinalists: { poolId: string; playerId: string; rank: number }[];
 } {
   const crossFinalists: { poolId: string; playerId: string; rank: number }[] = [];
   const losersFinalists: { poolId: string; playerId: string; rank: number }[] = [];
+  const crossPlayerIds = new Set<string>(); // Track players already in cross finals
 
   pools.forEach((pool) => {
     const standings = allStandings[pool.id] || [];
 
-    // Top players for cross-finals
-    for (let i = 0; i < topCount && i < standings.length; i++) {
-      crossFinalists.push({
-        poolId: pool.id,
-        playerId: standings[i].playerId,
-        rank: i + 1,
-      });
-    }
+    standings.forEach((standingRow, index) => {
+      const playerId = standingRow.playerId;
+      const rank = index + 1;
 
-    // Bottom players for losers bracket
-    for (let i = standings.length - bottomCount; i < standings.length; i++) {
-      if (i >= 0) {
-        losersFinalists.push({
-          poolId: pool.id,
-          playerId: standings[i].playerId,
-          rank: standings.length - i,
-        });
+      // Check manual assignment first
+      const manualAssignment = manualAssignments?.[playerId];
+
+      if (manualAssignment === 'CROSS') {
+        // Manually assigned to Cross Finals
+        crossFinalists.push({ poolId: pool.id, playerId, rank });
+        crossPlayerIds.add(playerId);
+      } else if (manualAssignment === 'LOSERS') {
+        // Manually assigned to Losers Bracket
+        losersFinalists.push({ poolId: pool.id, playerId, rank });
+      } else if (manualAssignment === 'ELIMINATED') {
+        // Manually eliminated - skip
+      } else if (manualAssignment === null || manualAssignment === undefined) {
+        // No manual assignment - use automatic logic
+        const isTopPlayer = index < topCount;
+        const isBottomPlayer = index >= standings.length - bottomCount;
+
+        if (isTopPlayer) {
+          crossFinalists.push({ poolId: pool.id, playerId, rank });
+          crossPlayerIds.add(playerId);
+        } else if (isBottomPlayer && !crossPlayerIds.has(playerId)) {
+          // Only add to losers if not already in cross (priority rule)
+          losersFinalists.push({ poolId: pool.id, playerId, rank });
+        }
       }
-    }
+    });
   });
 
   return { crossFinalists, losersFinalists };
@@ -125,6 +139,7 @@ export function generateCrossFinalsMatches(
 
 /**
  * Generate losers bracket (inverted elimination - loser advances)
+ * Simple single-elimination format where losers advance
  */
 export function generateLosersBracketMatches(
   finalists: { poolId: string; playerId: string; rank: number }[]
@@ -134,8 +149,8 @@ export function generateLosersBracketMatches(
 
   if (numPlayers < 2) return matches;
 
-  // Pair players for first round
-  let roundIndex = 1;
+  // Standard single-elimination pairing
+  const roundIndex = 1;
 
   for (let i = 0; i < numPlayers; i += 2) {
     if (i + 1 < numPlayers) {
@@ -152,6 +167,7 @@ export function generateLosersBracketMatches(
     }
   }
 
+  console.log(`Generated ${matches.length} losers bracket matches for round 1`);
   return matches;
 }
 
@@ -246,13 +262,13 @@ export function generateNextCrossRound(
 
 /**
  * Generate next round matches for losers bracket
- * Losers are paired sequentially: Loser of Match 1 vs Loser of Match 2, etc.
+ * Losers from current round are paired sequentially for next round
  */
 export function generateNextLosersRound(
   currentRoundMatches: Match[],
   nextRoundIndex: number
 ): Match[] {
-  // Sort matches by their position in the round to ensure consistent pairing
+  // Sort matches to ensure consistent pairing order
   const sortedMatches = [...currentRoundMatches].sort((a, b) => {
     return a.id.localeCompare(b.id);
   });

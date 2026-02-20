@@ -16,6 +16,7 @@ interface MatchScheduleProps {
   matches: Match[];
   rounds: Round[];
   players: Player[];
+  tournamentId: string;
   onMatchUpdate: (matchId: string, legsP1: number, legsP2: number) => void;
   onMatchConfirm: (matchId: string) => void;
   onMatchEdit: (matchId: string) => void;
@@ -28,12 +29,14 @@ export const MatchSchedule: React.FC<MatchScheduleProps> = ({
   matches,
   rounds,
   players,
+  tournamentId,
   onMatchUpdate,
   onMatchConfirm,
   onMatchEdit,
   onSaveRound,
 }) => {
   const [editingMatch, setEditingMatch] = useState<string | null>(null);
+  const [recordedMatchId, setRecordedMatchId] = useState<string | null>(null);
   const [localScores, setLocalScores] = useState<{
     [matchId: string]: { p1: string; p2: string };
   }>({});
@@ -102,6 +105,17 @@ export const MatchSchedule: React.FC<MatchScheduleProps> = ({
       },
     }));
     onMatchEdit(match.id);
+  };
+
+  const handleRecordClick = (match: Match) => {
+    setRecordedMatchId(prev => prev === match.id ? null : match.id);
+  };
+
+  const handleRecordDoubleClick = (match: Match) => {
+    const p1 = players.find(p => p.id === match.player1Id)?.name || '';
+    const p2 = players.find(p => p.id === match.player2Id)?.name || '';
+    const url = `/tournament/${tournamentId}/scoreboard?p1=${encodeURIComponent(p1)}&p2=${encodeURIComponent(p2)}`;
+    window.open(url, '_blank');
   };
 
   const handleSaveRoundClick = (roundIndex: number) => {
@@ -263,6 +277,18 @@ export const MatchSchedule: React.FC<MatchScheduleProps> = ({
                           </button>
                         )}
                       </div>
+
+                      {/* Record Button */}
+                      <button
+                        onClick={() => handleRecordClick(match)}
+                        onDoubleClick={() => handleRecordDoubleClick(match)}
+                        title={recordedMatchId === match.id ? "On air — dubbelklik om scorebord te openen" : "Zet op scorebord"}
+                        className="flex-shrink-0 w-8 h-8 rounded-full border-2 transition-colors"
+                        style={{
+                          backgroundColor: recordedMatchId === match.id ? '#ef4444' : 'transparent',
+                          borderColor: recordedMatchId === match.id ? '#ef4444' : '#9ca3af',
+                        }}
+                      />
                     </div>
                   );
                 })}

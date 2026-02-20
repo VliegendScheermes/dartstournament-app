@@ -14,10 +14,11 @@ interface BracketViewProps {
   matches: Match[];
   players: Player[];
   isLosers?: boolean;
+  tournamentId: string;
   onMatchUpdate: (matchId: string, legsP1: number, legsP2: number) => void;
   onMatchConfirm: (matchId: string, legsP1?: number, legsP2?: number) => void;
   onMatchEdit: (matchId: string) => void;
-  onSaveRound?: (roundIndex: number) => void;
+  onSaveRound?: (roundIndex: number, stage: 'CROSS' | 'LOSERS') => void;
 }
 
 export const BracketView: React.FC<BracketViewProps> = ({
@@ -25,12 +26,14 @@ export const BracketView: React.FC<BracketViewProps> = ({
   matches,
   players,
   isLosers = false,
+  tournamentId,
   onMatchUpdate,
   onMatchConfirm,
   onMatchEdit,
   onSaveRound,
 }) => {
   const [editingMatch, setEditingMatch] = useState<string | null>(null);
+  const [recordedMatchId, setRecordedMatchId] = useState<string | null>(null);
   const [localScores, setLocalScores] = useState<{
     [matchId: string]: { p1: string; p2: string };
   }>({});
@@ -93,6 +96,17 @@ export const BracketView: React.FC<BracketViewProps> = ({
     onMatchEdit(match.id);
   };
 
+  const handleRecordClick = (match: Match) => {
+    setRecordedMatchId(prev => prev === match.id ? null : match.id);
+  };
+
+  const handleRecordDoubleClick = (match: Match) => {
+    const p1 = players.find(p => p.id === match.player1Id)?.name || '';
+    const p2 = players.find(p => p.id === match.player2Id)?.name || '';
+    const url = `/tournament/${tournamentId}/scoreboard?p1=${encodeURIComponent(p1)}&p2=${encodeURIComponent(p2)}`;
+    window.open(url, '_blank');
+  };
+
   // Group matches by round
   const matchesByRound: { [round: number]: Match[] } = {};
   matches.forEach((match) => {
@@ -109,20 +123,25 @@ export const BracketView: React.FC<BracketViewProps> = ({
   const getRoundName = (roundIndex: number, totalRounds: number) => {
     const matchesInRound = matchesByRound[roundIndex].length;
 
+    let baseName = '';
+
     // Name rounds based on number of matches in that round
     if (matchesInRound === 1) {
-      return 'Final';
+      baseName = 'Final';
     } else if (matchesInRound === 2) {
-      return 'Semi Finals';
+      baseName = 'Semi Finals';
     } else if (matchesInRound === 4) {
-      return 'Quarter Finals';
+      baseName = 'Quarter Finals';
     } else if (matchesInRound === 8) {
-      return 'Round of 16';
+      baseName = 'Round of 16';
     } else if (matchesInRound === 16) {
-      return 'Round of 32';
+      baseName = 'Round of 32';
+    } else {
+      baseName = `Round ${roundIndex}`;
     }
 
-    return `Round ${roundIndex}`;
+    // Add "Losers" prefix for losers bracket
+    return isLosers ? `Losers ${baseName}` : baseName;
   };
 
   return (
@@ -224,10 +243,34 @@ export const BracketView: React.FC<BracketViewProps> = ({
                           </button>
                         )}
                       </div>
+
+                      {/* Record Button */}
+                      <button
+                        onClick={() => handleRecordClick(match)}
+                        onDoubleClick={() => handleRecordDoubleClick(match)}
+                        title={recordedMatchId === match.id ? "On air — dubbelklik om scorebord te openen" : "Zet op scorebord"}
+                        className="flex-shrink-0 w-8 h-8 rounded-full border-2 transition-colors"
+                        style={{
+                          backgroundColor: recordedMatchId === match.id ? '#ef4444' : 'transparent',
+                          borderColor: recordedMatchId === match.id ? '#ef4444' : '#9ca3af',
+                        }}
+                      />
                     </div>
                   );
                 })}
               </div>
+
+              {/* Save Round Button */}
+              {onSaveRound && roundMatches.every((m) => m.confirmed) && (
+                <div className="mt-3">
+                  <button
+                    onClick={() => onSaveRound(roundIndex, isLosers ? 'LOSERS' : 'CROSS')}
+                    className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                  >
+                    Save {roundName} & Generate Next Round
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}

@@ -36,31 +36,28 @@ export function generateRoundRobinMatches(
   const numRounds = n - 1;
 
   // Circle method: position 0 is fixed, others rotate
+  // Start with the initial arrangement
+  let currentRotation = [...players];
+
   for (let round = 0; round < numRounds; round++) {
     const roundMatches: string[] = [];
-    const rotation = [...players];
 
-    // Rotate: keep position 0 fixed, rotate positions 1 to n-1
+    // For round > 0, rotate the positions (except position 0 which stays fixed)
     if (round > 0) {
-      const fixed = rotation[0];
-      const toRotate = rotation.slice(1);
+      const fixed = currentRotation[0];
+      const toRotate = currentRotation.slice(1);
 
-      // Rotate clockwise: take last element and put it at the beginning
-      for (let r = 0; r < round; r++) {
-        const last = toRotate.pop()!;
-        toRotate.unshift(last);
-      }
+      // Rotate clockwise by 1: take last element and put it at the beginning
+      const last = toRotate.pop()!;
+      toRotate.unshift(last);
 
-      rotation[0] = fixed;
-      for (let i = 0; i < toRotate.length; i++) {
-        rotation[i + 1] = toRotate[i];
-      }
+      currentRotation = [fixed, ...toRotate];
     }
 
     // Pair up opponents: position i vs position (n-1-i)
     for (let i = 0; i < n / 2; i++) {
-      const player1 = rotation[i];
-      const player2 = rotation[n - 1 - i];
+      const player1 = currentRotation[i];
+      const player2 = currentRotation[n - 1 - i];
 
       // Skip matches involving the "BYE" player
       if (player1 === 'BYE' || player2 === 'BYE') {

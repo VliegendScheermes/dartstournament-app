@@ -125,6 +125,7 @@ export function PoolViewerScreen({ id }: { id: string }) {
               <div className="space-y-6 flex-1 overflow-y-auto">
                 {tournament.pools.map((pool) => {
                   const standings = getStandings(id, pool.id);
+                  const manualAssignments = tournament.drawState?.finalsAssignments || {};
                   return (
                     <ViewerStandingsTable
                       key={pool.id}
@@ -133,6 +134,7 @@ export function PoolViewerScreen({ id }: { id: string }) {
                       topPlayers={tournament.settings.advanceToCrossFinals}
                       bottomPlayers={tournament.settings.advanceToLosersFinal}
                       boardNumber={pool.boardNumber}
+                      manualAssignments={manualAssignments}
                     />
                   );
                 })}

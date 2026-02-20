@@ -5,7 +5,7 @@
 
 'use client';
 
-import React, { use, useEffect } from 'react';
+import React, { use, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTournamentStore } from '@/lib/store/tournamentStore';
 import { BracketView } from '@/components/tournament/BracketView';
@@ -37,13 +37,18 @@ export default function FinalsPage({ params }: FinalsPageProps) {
   const [deleteModal, setDeleteModal] = useState(false);
   const [resetModal, setResetModal] = useState(false);
 
+  // Track last generated assignments to prevent infinite loops
+  const lastGeneratedRef = useRef<string>('');
+
   const {
     loadTournament,
     setMatches,
     updateMatch,
     confirmMatch,
     unconfirmMatch,
+    saveRound,
     updateStatus,
+    updateDrawState,
     archiveTournament,
     deleteTournament,
     isLoading,
@@ -52,6 +57,11 @@ export default function FinalsPage({ params }: FinalsPageProps) {
 
   const tournament = useTournamentStore(state => state.tournaments.find(t => t.id === id));
   const getStandings = useTournamentStore(state => state.getStandings);
+
+  // Extract assignment hash to prevent infinite loops
+  const assignmentsHash = tournament?.drawState?.finalsAssignments
+    ? JSON.stringify(tournament.drawState.finalsAssignments)
+    : '{}';
 
   useEffect(() => {
     setIsHydrated(true);
@@ -68,11 +78,17 @@ export default function FinalsPage({ params }: FinalsPageProps) {
     if (!tournament || !isHydrated) return;
 
     const generateFinalsMatches = async () => {
+      // Check if we've already generated with these exact assignments
+      if (lastGeneratedRef.current === assignmentsHash) {
+        return; // Already generated with these assignments, skip
+      }
+
       // Generate finals matches if not already done
       const finalsMatches = tournament.matches.filter(
         (m) => m.stage === 'CROSS' || m.stage === 'LOSERS'
       );
 
+      // Only generate if no finals exist yet
       if (finalsMatches.length === 0) {
         try {
           // Get standings for all pools
@@ -81,12 +97,16 @@ export default function FinalsPage({ params }: FinalsPageProps) {
             allStandings[pool.id] = getStandings(id, pool.id);
           });
 
-          // Select finalists
+          // Get manual finals assignments from drawState
+          const manualAssignments = tournament.drawState?.finalsAssignments || {};
+
+          // Select finalists (respects manual assignments if present)
           const { crossFinalists, losersFinalists } = selectFinalists(
             tournament.pools,
             allStandings,
             tournament.settings.advanceToCrossFinals,
-            tournament.settings.advanceToLosersFinal
+            tournament.settings.advanceToLosersFinal,
+            manualAssignments
           );
 
           // Generate brackets
@@ -98,12 +118,18 @@ export default function FinalsPage({ params }: FinalsPageProps) {
             : [];
 
           // Save to store
+          const poolMatches = tournament.matches.filter((m) => m.stage === 'POOL');
           const allMatches = [
-            ...tournament.matches,
+            ...poolMatches,
             ...crossMatches,
             ...losersMatches,
           ];
           await setMatches(id, allMatches);
+
+          // Update ref to prevent regenerating with same assignments
+          lastGeneratedRef.current = assignmentsHash;
+
+          console.log('Finals generated with assignments:', manualAssignments);
         } catch (error) {
           console.error('Failed to generate finals matches:', error);
         }
@@ -111,7 +137,7 @@ export default function FinalsPage({ params }: FinalsPageProps) {
     };
 
     generateFinalsMatches();
-  }, [id, tournament, getStandings, setMatches, isHydrated]);
+  }, [id, assignmentsHash, getStandings, setMatches, isHydrated]);
 
   if (!isHydrated || isLoading) {
     return (
@@ -174,109 +200,93 @@ export default function FinalsPage({ params }: FinalsPageProps) {
     try {
       // Confirm the match in the store
       await confirmMatch(id, matchId);
+    } catch (error) {
+      console.error('Failed to confirm match:', error);
+      return;
+    }
+  };
 
-      // Get all matches in the same round and stage
-      const currentRoundMatches = tournament.matches.filter(
-        (m) => m.stage === match.stage && m.roundIndex === match.roundIndex
+  const handleSaveRound = async (roundIndex: number, stage: 'CROSS' | 'LOSERS') => {
+    try {
+      // Filter matches by BOTH roundIndex AND stage to avoid mixing Cross and Losers brackets
+      const roundMatches = tournament.matches.filter(
+        (m) => m.roundIndex === roundIndex && m.stage === stage
       );
 
-      // Check if all matches in this round are now confirmed (including the one we just confirmed)
-      const allConfirmed = currentRoundMatches.every(
-        (m) => m.confirmed || m.id === matchId
-      );
-
-      if (!allConfirmed) {
-        // Still waiting for other matches in this round to be confirmed
-        console.log(`Round ${match.roundIndex}: Waiting for ${currentRoundMatches.filter(m => !m.confirmed && m.id !== matchId).length} more matches`);
+      if (roundMatches.length === 0) {
+        console.error('No matches found for this round');
         return;
       }
 
-      // All matches in the round are confirmed - time to progress to next round
-      console.log(`Round ${match.roundIndex} complete with ${currentRoundMatches.length} matches`);
+      // Validate all matches are confirmed
+      const allConfirmed = roundMatches.every((m) => m.confirmed);
+      if (!allConfirmed) {
+        alert('Please confirm all matches in this round before saving');
+        return;
+      }
 
-      if (match.stage === 'CROSS') {
+      // Save the round to mark it as complete in database
+      await saveRound(id, roundIndex);
+
+      console.log(`Round ${roundIndex} (${stage}) saved with ${roundMatches.length} matches`);
+
+      if (stage === 'CROSS') {
         // Check if this was the Final match (only 1 match in the round)
-        if (currentRoundMatches.length === 1) {
-          // Tournament is complete - we just confirmed the Final
-          console.log('🏆 Final match confirmed - Tournament complete!');
+        if (roundMatches.length === 1) {
+          // Tournament is complete - we just saved the Final
+          console.log('🏆 Final round saved - Tournament complete!');
           await updateStatus(id, 'completed');
           return;
         }
 
         // Generate next round with winners
-      console.log(`Generating next round (${match.roundIndex + 1}) from ${currentRoundMatches.length} matches`);
+        console.log(`Generating next round (${roundIndex + 1}) from ${roundMatches.length} matches`);
 
-      // Create updated matches array with scores and confirmation
-      const updatedCurrentMatches = currentRoundMatches.map((m) =>
-        m.id === matchId ? { ...m, confirmed: true, legsP1: p1, legsP2: p2 } : m
-      );
+        const nextRoundMatches = generateNextCrossRound(roundMatches, roundIndex + 1);
 
-      const nextRoundMatches = generateNextCrossRound(
-        updatedCurrentMatches,
-        match.roundIndex + 1
-      );
+        if (nextRoundMatches.length > 0) {
+          console.log(`✓ Generated ${nextRoundMatches.length} matches for round ${roundIndex + 1}`);
 
-      if (nextRoundMatches.length > 0) {
-        console.log(`✓ Generated ${nextRoundMatches.length} matches for round ${match.roundIndex + 1}`);
-
-        // Check if next round already exists to prevent duplicates
-        const existingNextRound = tournament.matches.filter(
-          (m) => m.stage === 'CROSS' && m.roundIndex === match.roundIndex + 1
-        );
-
-        if (existingNextRound.length === 0) {
-          // First update the current match with scores and confirmation
-          const updatedMatches = tournament.matches.map((m) =>
-            m.id === matchId ? { ...m, legsP1: p1, legsP2: p2, confirmed: true } : m
+          // Check if next round already exists to prevent duplicates
+          const existingNextRound = tournament.matches.filter(
+            (m) => m.stage === 'CROSS' && m.roundIndex === roundIndex + 1
           );
 
-          // Then add new round matches
-          const allMatches = [...updatedMatches, ...nextRoundMatches];
-          setMatches(id, allMatches);
-          console.log(`✓ Added next round. Total matches: ${allMatches.length}`);
+          if (existingNextRound.length === 0) {
+            // Add new round matches
+            const allMatches = [...tournament.matches, ...nextRoundMatches];
+            await setMatches(id, allMatches);
+            console.log(`✓ Added next round. Total matches: ${allMatches.length}`);
+          } else {
+            console.log('⚠ Next round already exists, skipping generation');
+          }
         } else {
-          console.log('⚠ Next round already exists, skipping generation');
+          console.warn('⚠ No next round matches generated');
         }
-      } else {
-        console.warn('⚠ No next round matches generated');
-      }
+      } else if (stage === 'LOSERS') {
+        // Losers bracket logic
+        if (roundMatches.length === 1) {
+          console.log('Losers bracket Final complete');
+          return;
+        }
 
-    } else if (match.stage === 'LOSERS') {
-      // Losers bracket logic
-      if (currentRoundMatches.length === 1) {
-        console.log('Losers bracket Final complete');
-        return;
-      }
+        // Generate next round with losers
+        const nextRoundMatches = generateNextLosersRound(roundMatches, roundIndex + 1);
 
-      // Generate next round with losers (include scores for winner determination)
-      const updatedCurrentMatches = currentRoundMatches.map((m) =>
-        m.id === matchId ? { ...m, confirmed: true, legsP1: p1, legsP2: p2 } : m
-      );
-
-      const nextRoundMatches = generateNextLosersRound(
-        updatedCurrentMatches,
-        match.roundIndex + 1
-      );
-
-      if (nextRoundMatches.length > 0) {
-        const existingNextRound = tournament.matches.filter(
-          (m) => m.stage === 'LOSERS' && m.roundIndex === match.roundIndex + 1
-        );
-
-        if (existingNextRound.length === 0) {
-          // First update the current match with scores and confirmation
-          const updatedMatches = tournament.matches.map((m) =>
-            m.id === matchId ? { ...m, legsP1: p1, legsP2: p2, confirmed: true } : m
+        if (nextRoundMatches.length > 0) {
+          const existingNextRound = tournament.matches.filter(
+            (m) => m.stage === 'LOSERS' && m.roundIndex === roundIndex + 1
           );
 
-          // Then add new round matches
-          setMatches(id, [...updatedMatches, ...nextRoundMatches]);
+          if (existingNextRound.length === 0) {
+            await setMatches(id, [...tournament.matches, ...nextRoundMatches]);
+            console.log(`✓ Generated losers round ${roundIndex + 1}`);
+          }
         }
       }
-    }
     } catch (error) {
-      console.error('Failed to confirm match:', error);
-      return;
+      console.error('Failed to save round:', error);
+      alert('Failed to save round. Please try again.');
     }
   };
 
@@ -303,6 +313,9 @@ export default function FinalsPage({ params }: FinalsPageProps) {
     );
     setMatches(id, poolMatches);
     setResetModal(false);
+
+    // Clear the ref so finals can be regenerated
+    lastGeneratedRef.current = '';
 
     // Reset tournament status to pool-play if it was completed
     if (tournament.status === 'completed') {
@@ -407,8 +420,10 @@ export default function FinalsPage({ params }: FinalsPageProps) {
 
             <div className="flex items-center gap-2">
               {/* Live View Icon */}
-              <button
-                onClick={() => router.push(`/tournament/${id}/live-viewer`)}
+              <a
+                href={`/tournament/${id}/live-viewer`}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="p-2 rounded-lg hover:bg-gray-200 transition-colors"
                 aria-label="Live View"
               >
@@ -425,7 +440,7 @@ export default function FinalsPage({ params }: FinalsPageProps) {
                     d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
                   />
                 </svg>
-              </button>
+              </a>
 
               {/* Settings Icon */}
               <button
@@ -460,6 +475,27 @@ export default function FinalsPage({ params }: FinalsPageProps) {
           </h1>
           <p className="text-gray-500 mt-1">Finals Phase</p>
         </div>
+
+        {/* Info message for manual assignments */}
+        {tournament.drawState?.finalsAssignments && Object.keys(tournament.drawState.finalsAssignments).length > 0 && (
+          <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 text-blue-600 text-xl">ℹ️</div>
+              <div>
+                <h3 className="font-semibold text-blue-900 mb-1">
+                  Manual Finals Assignments Active
+                </h3>
+                <p className="text-sm text-blue-800">
+                  You have manually assigned players to Cross Finals or Losers Bracket from the Pool Play page.
+                  The brackets have been generated according to your manual selections.
+                </p>
+                <p className="text-sm text-blue-800 mt-2">
+                  If you change the assignments, use the <strong>Reset Finals</strong> button below to regenerate the brackets.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Warning for unconfirmed pool matches */}
         {hasUnconfirmedPoolMatches && (
@@ -499,9 +535,11 @@ export default function FinalsPage({ params }: FinalsPageProps) {
                 matches={losersMatches}
                 players={tournament.players}
                 isLosers={true}
+                tournamentId={id}
                 onMatchUpdate={handleMatchUpdate}
                 onMatchConfirm={handleMatchConfirm}
                 onMatchEdit={handleMatchEdit}
+                onSaveRound={handleSaveRound}
               />
             </div>
           )}
@@ -513,9 +551,11 @@ export default function FinalsPage({ params }: FinalsPageProps) {
               matches={crossMatches}
               players={tournament.players}
               isLosers={false}
+              tournamentId={id}
               onMatchUpdate={handleMatchUpdate}
               onMatchConfirm={handleMatchConfirm}
               onMatchEdit={handleMatchEdit}
+              onSaveRound={handleSaveRound}
             />
           </div>
         </div>

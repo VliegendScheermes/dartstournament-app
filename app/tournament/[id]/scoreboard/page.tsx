@@ -102,10 +102,18 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [tournamentName, setTournamentName] = useState('Darts Tournament');
   const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
-  const [players, setPlayers] = useState<[PlayerState, PlayerState]>([
-    makePlayer('Player One', 501, true),
-    makePlayer('Player Two', 501, false),
-  ]);
+  const [players, setPlayers] = useState<[PlayerState, PlayerState]>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const p1 = params.get('p1');
+      const p2 = params.get('p2');
+      return [
+        makePlayer(p1 || 'Player One', 501, true),
+        makePlayer(p2 || 'Player Two', 501, false),
+      ];
+    }
+    return [makePlayer('Player One', 501, true), makePlayer('Player Two', 501, false)];
+  });
   const [message, setMessage] = useState('');
   const [activePlayer, setActivePlayer] = useState<0 | 1>(0);
   const [inputValue, setInputValue] = useState('');
