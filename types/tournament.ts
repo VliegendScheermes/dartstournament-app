@@ -38,7 +38,7 @@ export interface Pool {
   id: string;
   name: string;
   playerIds: string[];
-  boardNumber?: number | null;
+  boardNumber?: string | null;
 }
 
 // Match Stage
@@ -55,7 +55,7 @@ export interface Match {
   legsP1: number | null;
   legsP2: number | null;
   confirmed: boolean;
-  boardNumber?: number | null;
+  boardNumber?: string | null;
 }
 
 // Round
