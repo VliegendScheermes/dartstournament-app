@@ -18,6 +18,7 @@ export interface DrawState {
   status: 'idle' | 'picking' | 'assigned' | 'complete';
   currentPickedPlayerId?: string;
   currentPickedPoolId?: string;
+  finalsAssignments?: { [playerId: string]: 'CROSS' | 'LOSERS' | 'ELIMINATED' | null };
 }
 
 // Tournament Settings
