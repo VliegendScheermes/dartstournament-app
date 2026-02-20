@@ -18,17 +18,22 @@ export function DrawViewerScreen({ id }: { id: string }) {
   const tournament = useTournamentStore(state => state.tournaments.find(t => t.id === id));
   const loadTournamentPublic = useTournamentStore(state => state.loadTournamentPublic);
 
+  // Compute draw status early (needed as polling dependency)
+  const drawStateStatus = tournament?.drawState?.status || 'idle';
+
   useEffect(() => {
     setIsHydrated(true);
   }, []);
 
-  // Poll at 500ms during draw — 'picking' state only lasts ~2.5s, must not be missed
+  // Poll at 500ms during draw — 'picking' state only lasts ~2.5s, must not be missed.
+  // Stop polling when draw is complete: parent LiveViewerPage polls at 3s which is sufficient.
   useEffect(() => {
     if (!isHydrated) return;
+    if (drawStateStatus === 'complete') return;
     loadTournamentPublic(id);
     const interval = setInterval(() => loadTournamentPublic(id), 500);
     return () => clearInterval(interval);
-  }, [id, isHydrated, loadTournamentPublic]);
+  }, [id, isHydrated, drawStateStatus, loadTournamentPublic]);
 
   useEffect(() => {
     if (!tournament) return;

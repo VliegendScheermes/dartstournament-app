@@ -10,7 +10,9 @@ export async function GET(
 ) {
   const { id } = await params
   const data = liveMatchStore.get(id)
-  return NextResponse.json(data)
+  return NextResponse.json(data, {
+    headers: { 'Cache-Control': 'no-store' }
+  })
 }
 
 // POST /api/tournaments/[id]/live-match — requires auth (operator only)

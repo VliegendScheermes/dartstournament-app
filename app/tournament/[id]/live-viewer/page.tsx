@@ -15,7 +15,7 @@ export default function LiveViewerPage({ params }: LiveViewerPageProps) {
   const [isHydrated, setIsHydrated] = useState(false);
   const [opacity, setOpacity] = useState(1);
   const [debugMode, setDebugMode] = useState(false);
-  const isFirstStatusChange = useRef(true);
+  const prevStatusRef = useRef<string | undefined>(undefined);
 
   // Single source of truth: backend tournament status
   const tournament = useTournamentStore(state => state.tournaments.find(t => t.id === id));
@@ -36,12 +36,14 @@ export default function LiveViewerPage({ params }: LiveViewerPageProps) {
     setDebugMode(new URLSearchParams(window.location.search).get('debug') === '1');
   }, []);
 
-  // Fade transition on status change (skip initial render)
+  // Fade transition only when status actually changes between real values (not on initial load)
   useEffect(() => {
-    if (isFirstStatusChange.current) {
-      isFirstStatusChange.current = false;
+    const newStatus = tournament?.status;
+    if (prevStatusRef.current === undefined || newStatus === undefined || prevStatusRef.current === newStatus) {
+      prevStatusRef.current = newStatus;
       return;
     }
+    prevStatusRef.current = newStatus;
     setOpacity(0);
     const timer = setTimeout(() => setOpacity(1), 350);
     return () => clearTimeout(timer);

@@ -8,19 +8,12 @@ export function FinalsViewerScreen({ id }: { id: string }) {
   const [isHydrated, setIsHydrated] = useState(false);
 
   const tournament = useTournamentStore(state => state.tournaments.find(t => t.id === id));
-  const loadTournamentPublic = useTournamentStore(state => state.loadTournamentPublic);
 
   useEffect(() => {
     setIsHydrated(true);
   }, []);
 
-  // Load tournament data from public API and poll every 3s for live updates
-  useEffect(() => {
-    if (!isHydrated) return;
-    loadTournamentPublic(id);
-    const interval = setInterval(() => loadTournamentPublic(id), 3000);
-    return () => clearInterval(interval);
-  }, [id, isHydrated, loadTournamentPublic]);
+  // Data is provided by parent LiveViewerPage which polls at 3s — no own interval needed
 
   if (!isHydrated) {
     return (
