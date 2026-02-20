@@ -37,7 +37,7 @@ export interface Pool {
   id: string;
   name: string;
   playerIds: string[];
-  boardNumbers: number[]; // Array of assigned board numbers for this pool
+  boardNumber?: number | null;
 }
 
 // Match Stage

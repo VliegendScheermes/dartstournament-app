@@ -13,7 +13,7 @@ interface ViewerStandingsTableProps {
   standings: StandingsRow[];
   topPlayers: number;
   bottomPlayers: number;
-  boardNumbers: number[];
+  boardNumber?: number | null;
 }
 
 export const ViewerStandingsTable: React.FC<ViewerStandingsTableProps> = ({
@@ -21,11 +21,8 @@ export const ViewerStandingsTable: React.FC<ViewerStandingsTableProps> = ({
   standings,
   topPlayers,
   bottomPlayers,
-  boardNumbers,
+  boardNumber,
 }) => {
-  const boardsLabel = boardNumbers.length > 0
-    ? `Board${boardNumbers.length > 1 ? 's' : ''} ${boardNumbers.join(', ')}`
-    : 'No boards';
   return (
     <div className="rounded-lg p-4" style={{
       background: '#004d30',
@@ -46,7 +43,7 @@ export const ViewerStandingsTable: React.FC<ViewerStandingsTableProps> = ({
           border: '1px solid #d4af37',
           fontFamily: 'Georgia, serif'
         }}>
-          {boardsLabel}
+          Board {boardNumber ?? '-'}
         </span>
       </div>
 

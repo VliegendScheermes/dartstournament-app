@@ -35,10 +35,6 @@ export function generateRoundRobinMatches(
   const n = players.length;
   const numRounds = n - 1;
 
-  // Track match index for board distribution
-  let matchIndex = 0;
-  const poolBoards = pool.boardNumbers && pool.boardNumbers.length > 0 ? pool.boardNumbers : [];
-
   // Circle method: position 0 is fixed, others rotate
   for (let round = 0; round < numRounds; round++) {
     const roundMatches: string[] = [];
@@ -78,12 +74,6 @@ export function generateRoundRobinMatches(
       }
 
       const matchId = uuidv4();
-
-      // Distribute matches across pool's assigned boards (round-robin)
-      const assignedBoard = poolBoards.length > 0
-        ? poolBoards[matchIndex % poolBoards.length]
-        : null;
-
       const newMatch: Match = {
         id: matchId,
         roundIndex: round + 1,
@@ -94,12 +84,11 @@ export function generateRoundRobinMatches(
         legsP1: null,
         legsP2: null,
         confirmed: false,
-        boardNumber: assignedBoard,
+        boardNumber: pool.boardNumber,
       };
 
       matches.push(newMatch);
       roundMatches.push(matchId);
-      matchIndex++; // Increment for next board selection
     }
 
     if (roundMatches.length > 0) {

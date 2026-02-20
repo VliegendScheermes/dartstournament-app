@@ -132,7 +132,7 @@ export function PoolViewerScreen({ id }: { id: string }) {
                       standings={standings}
                       topPlayers={tournament.settings.advanceToCrossFinals}
                       bottomPlayers={tournament.settings.advanceToLosersFinal}
-                      boardNumbers={pool.boardNumbers}
+                      boardNumber={pool.boardNumber}
                     />
                   );
                 })}
