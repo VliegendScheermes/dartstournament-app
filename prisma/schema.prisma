@@ -47,11 +47,10 @@ model Player {
 }
 
 model Pool {
-  id               String  @id @default(uuid())
-  tournamentId     String
-  name             String
-  boardNumber      Int?     // Legacy: single board (kept for backward compatibility)
-  boardNumbersText String?  // Flexible format: "1", "1,2,3", or "1-4"
+  id           String  @id @default(uuid())
+  tournamentId String
+  name         String
+  boardNumber  Int?
 
   tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   players      PoolPlayer[]

@@ -60,7 +60,6 @@ export function distributePlayers(
       name: `Poule ${poolLetters[i]}`,
       playerIds: [],
       boardNumber: null,
-      boardNumbersText: null,
     });
   }
 
@@ -116,7 +115,6 @@ export async function liveDistributePlayers(
       name: `Poule ${poolLetters[i]}`,
       playerIds: [],
       boardNumber: null,
-      boardNumbersText: null,
     });
   }
 

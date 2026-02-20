@@ -6,7 +6,7 @@
 'use client';
 
 import React from 'react';
-import { StandingsRow, getPoolBoardNumbers } from '@/types/tournament';
+import { StandingsRow } from '@/types/tournament';
 
 interface StandingsTableProps {
   poolId: string;
@@ -14,8 +14,8 @@ interface StandingsTableProps {
   standings: StandingsRow[];
   topPlayers: number;
   bottomPlayers: number;
-  boardNumbersText?: string | null;
-  onBoardNumbersChange?: (poolId: string, boardNumbersText: string) => void;
+  boardNumber?: number | null;
+  onBoardNumberChange?: (poolId: string, boardNumber: number | null) => void;
 }
 
 export const StandingsTable: React.FC<StandingsTableProps> = ({
@@ -24,13 +24,13 @@ export const StandingsTable: React.FC<StandingsTableProps> = ({
   standings,
   topPlayers,
   bottomPlayers,
-  boardNumbersText,
-  onBoardNumbersChange,
+  boardNumber,
+  onBoardNumberChange,
 }) => {
-  const handleBoardNumbersChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBoardNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    if (onBoardNumbersChange) {
-      onBoardNumbersChange(poolId, value);
+    if (onBoardNumberChange) {
+      onBoardNumberChange(poolId, value === '' ? null : parseInt(value));
     }
   };
 
@@ -39,14 +39,14 @@ export const StandingsTable: React.FC<StandingsTableProps> = ({
       <div className="flex items-center justify-between mb-3">
         <h3 className="font-bold text-lg text-gray-900">{poolName}</h3>
         <div className="flex items-center gap-2">
-          <label className="text-sm text-gray-600">Boards</label>
+          <label className="text-sm text-gray-600">Board</label>
           <input
-            type="text"
-            value={boardNumbersText ?? ''}
-            onChange={handleBoardNumbersChange}
-            className="w-24 px-2 py-1 text-center border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-            placeholder="1,2,3"
-            title="Enter board numbers: e.g., 1 or 1,2,3 or 1-4"
+            type="number"
+            min="0"
+            value={boardNumber ?? ''}
+            onChange={handleBoardNumberChange}
+            className="w-16 px-2 py-1 text-center border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+            placeholder="0"
           />
         </div>
       </div>
