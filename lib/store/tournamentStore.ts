@@ -632,7 +632,7 @@ export const useTournamentStore = create<TournamentStore>()((set, get) => ({
         const tournament = get().getTournament(tournamentId);
         if (!tournament) return;
 
-        const drawState = tournament.drawState || {};
+        const drawState: DrawState = tournament.drawState || { status: 'idle' };
         const finalsAssignments = drawState.finalsAssignments || {};
 
         if (assignment === null) {
@@ -661,7 +661,7 @@ export const useTournamentStore = create<TournamentStore>()((set, get) => ({
         const tournament = get().getTournament(tournamentId);
         if (!tournament) return;
 
-        const drawState = tournament.drawState || {};
+        const drawState: DrawState = tournament.drawState || { status: 'idle' };
         delete drawState.finalsAssignments;
 
         await get().updateDrawState(tournamentId, drawState);
