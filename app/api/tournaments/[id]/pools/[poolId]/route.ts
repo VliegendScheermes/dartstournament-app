@@ -29,7 +29,7 @@ export async function PATCH(
     const updated = await prisma.pool.update({
       where: { id: poolId },
       data: {
-        ...(body.boardNumber !== undefined && { boardNumber: body.boardNumber }),
+        ...(body.boardNumbers !== undefined && { boardNumbers: body.boardNumbers }),
         ...(body.name !== undefined && { name: body.name }),
       }
     })

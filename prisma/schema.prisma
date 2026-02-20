@@ -50,7 +50,7 @@ model Pool {
   id           String  @id @default(uuid())
   tournamentId String
   name         String
-  boardNumber  Int?
+  boardNumbers Int[]   @default([])
 
   tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   players      PoolPlayer[]

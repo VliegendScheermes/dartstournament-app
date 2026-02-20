@@ -14,8 +14,9 @@ interface StandingsTableProps {
   standings: StandingsRow[];
   topPlayers: number;
   bottomPlayers: number;
-  boardNumber?: number | null;
-  onBoardNumberChange?: (poolId: string, boardNumber: number | null) => void;
+  boardNumbers: number[];
+  numBoards: number;
+  onBoardNumbersChange?: (poolId: string, boardNumbers: number[]) => void;
 }
 
 export const StandingsTable: React.FC<StandingsTableProps> = ({
@@ -24,14 +25,18 @@ export const StandingsTable: React.FC<StandingsTableProps> = ({
   standings,
   topPlayers,
   bottomPlayers,
-  boardNumber,
-  onBoardNumberChange,
+  boardNumbers,
+  numBoards,
+  onBoardNumbersChange,
 }) => {
-  const handleBoardNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    if (onBoardNumberChange) {
-      onBoardNumberChange(poolId, value === '' ? null : parseInt(value));
-    }
+  const handleBoardToggle = (boardNum: number) => {
+    if (!onBoardNumbersChange) return;
+
+    const newBoards = boardNumbers.includes(boardNum)
+      ? boardNumbers.filter(b => b !== boardNum)
+      : [...boardNumbers, boardNum].sort((a, b) => a - b);
+
+    onBoardNumbersChange(poolId, newBoards);
   };
 
   return (
@@ -39,15 +44,23 @@ export const StandingsTable: React.FC<StandingsTableProps> = ({
       <div className="flex items-center justify-between mb-3">
         <h3 className="font-bold text-lg text-gray-900">{poolName}</h3>
         <div className="flex items-center gap-2">
-          <label className="text-sm text-gray-600">Board</label>
-          <input
-            type="number"
-            min="0"
-            value={boardNumber ?? ''}
-            onChange={handleBoardNumberChange}
-            className="w-16 px-2 py-1 text-center border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-            placeholder="0"
-          />
+          <label className="text-sm text-gray-600">Boards:</label>
+          <div className="flex gap-1">
+            {Array.from({ length: numBoards }, (_, i) => i + 1).map((boardNum) => (
+              <button
+                key={boardNum}
+                type="button"
+                onClick={() => handleBoardToggle(boardNum)}
+                className={`px-2 py-1 text-xs font-medium rounded border transition-colors ${
+                  boardNumbers.includes(boardNum)
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                {boardNum}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       <div className="overflow-x-auto">

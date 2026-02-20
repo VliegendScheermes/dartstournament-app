@@ -78,7 +78,7 @@ export async function POST(
       data: {
         tournamentId: id,
         name: body.name,
-        boardNumber: body.boardNumber || null
+        boardNumbers: body.boardNumbers || []
       }
     })
 
@@ -133,7 +133,7 @@ export async function PUT(
             id: pool.id,
             tournamentId: id,
             name: pool.name,
-            boardNumber: pool.boardNumber || null
+            boardNumbers: pool.boardNumbers || []
           }
         })
 

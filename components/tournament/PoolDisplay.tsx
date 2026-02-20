@@ -77,7 +77,7 @@ export const PoolDisplay: React.FC<PoolDisplayProps> = ({
       id: 'ABCDEFGH'[i],
       name: `Poule ${'ABCDEFGH'[i]}`,
       playerIds: [] as string[],
-      boardNumber: null,
+      boardNumbers: [],
     }));
 
     let currentPools = initialPools;
