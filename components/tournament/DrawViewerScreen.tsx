@@ -50,7 +50,7 @@ export function DrawViewerScreen({ id }: { id: string }) {
 
       const pool = drawState.currentPickedPoolId
         ? tournament.pools.find(p => p.id === drawState.currentPickedPoolId) ||
-          { name: `Poule ${drawState.currentPickedPoolId}` }
+          { name: drawState.currentPickedPoolName || '...' }
         : { name: '...' };
 
       if (centerStageTimerRef.current) clearTimeout(centerStageTimerRef.current);
@@ -279,8 +279,8 @@ export function DrawViewerScreen({ id }: { id: string }) {
             <div className="grid grid-cols-2 gap-4">
               {Array.from({ length: tournament.settings.numPools }).map((_, index) => {
                 const poolLetter = 'ABCDEFGH'[index];
-                const pool = tournament.pools.find(p => p.id === poolLetter);
-                const isPulsing = pulsingPoolId === poolLetter;
+                const pool = tournament.pools[index] ?? null;
+                const isPulsing = pool ? pulsingPoolId === pool.id : false;
                 const poolPlayers = pool
                   ? pool.playerIds.map(pid => tournament.players.find(p => p.id === pid)).filter(Boolean) as Player[]
                   : [];

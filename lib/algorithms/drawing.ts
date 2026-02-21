@@ -56,7 +56,7 @@ export function distributePlayers(
   const poolLetters = 'ABCDEFGH';
   for (let i = 0; i < numPools; i++) {
     pools.push({
-      id: poolLetters[i],
+      id: crypto.randomUUID(),
       name: `Poule ${poolLetters[i]}`,
       playerIds: [],
       boardNumber: null,
@@ -111,7 +111,7 @@ export async function liveDistributePlayers(
   const poolLetters = 'ABCDEFGH';
   for (let i = 0; i < numPools; i++) {
     pools.push({
-      id: poolLetters[i],
+      id: crypto.randomUUID(),
       name: `Poule ${poolLetters[i]}`,
       playerIds: [],
       boardNumber: null,

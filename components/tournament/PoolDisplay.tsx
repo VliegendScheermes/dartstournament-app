@@ -74,7 +74,7 @@ export const PoolDisplay: React.FC<PoolDisplayProps> = ({
 
     // Initialize pools structure and track it during drawing
     const initialPools = Array.from({ length: settings.numPools }, (_, i) => ({
-      id: 'ABCDEFGH'[i],
+      id: crypto.randomUUID(),
       name: `Poule ${'ABCDEFGH'[i]}`,
       playerIds: [] as string[],
       boardNumber: null,
@@ -97,6 +97,7 @@ export const PoolDisplay: React.FC<PoolDisplayProps> = ({
             status: 'picking',
             currentPickedPlayerId: player.id,
             currentPickedPoolId: initialPools[poolIndex].id,
+            currentPickedPoolName: initialPools[poolIndex].name,
           });
 
           // Hold "picking" for 2500ms so draw viewer (polling at 500ms) reliably catches it
@@ -120,6 +121,7 @@ export const PoolDisplay: React.FC<PoolDisplayProps> = ({
               status: 'assigned',
               currentPickedPlayerId: player.id,
               currentPickedPoolId: initialPools[poolIndex].id,
+              currentPickedPoolName: initialPools[poolIndex].name,
             });
           }, 2500);
 
@@ -256,7 +258,7 @@ export const PoolDisplay: React.FC<PoolDisplayProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {Array.from({ length: settings.numPools }).map((_, index) => {
           const poolLetter = 'ABCDEFGH'[index];
-          const pool = pools.find((p) => p.id === poolLetter);
+          const pool = pools[index] ?? null;
           const isCurrentPool = currentDrawing && currentDrawing.poolIndex === index;
 
           return (

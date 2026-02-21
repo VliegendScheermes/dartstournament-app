@@ -152,10 +152,10 @@ export async function PUT(
     })
 
     return NextResponse.json({ success: true })
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error updating pools:', error)
     return NextResponse.json(
-      { error: 'Failed to update pools' },
+      { error: 'Failed to update pools', detail: error?.message ?? String(error) },
       { status: 500 }
     )
   }
