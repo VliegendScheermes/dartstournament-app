@@ -25,7 +25,7 @@ interface SplitViewPageProps {
 export default function SplitViewPage({ params }: SplitViewPageProps) {
   const { id } = use(params);
   const [isHydrated, setIsHydrated] = useState(false);
-  const isFirstStatusChange = useRef(true);
+  const prevStatusRef = useRef<string | undefined>(undefined);
   const [opacity, setOpacity] = useState(1);
 
   const tournament = useTournamentStore(state => state.tournaments.find(t => t.id === id));
@@ -42,12 +42,14 @@ export default function SplitViewPage({ params }: SplitViewPageProps) {
     return () => clearInterval(interval);
   }, [id, loadTournamentPublic]);
 
-  // Fade transition on status change (skip initial render)
+  // Fade transition only when status actually changes between real values (not on initial load)
   useEffect(() => {
-    if (isFirstStatusChange.current) {
-      isFirstStatusChange.current = false;
+    const newStatus = tournament?.status;
+    if (prevStatusRef.current === undefined || newStatus === undefined || prevStatusRef.current === newStatus) {
+      prevStatusRef.current = newStatus;
       return;
     }
+    prevStatusRef.current = newStatus;
     setOpacity(0);
     const timer = setTimeout(() => setOpacity(1), 350);
     return () => clearTimeout(timer);

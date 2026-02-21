@@ -31,7 +31,9 @@ export async function GET(
       orderBy: { name: 'asc' }
     })
 
-    return NextResponse.json(players)
+    return NextResponse.json(players, {
+      headers: { 'Cache-Control': 'no-store' }
+    })
   } catch (error) {
     console.error('Error fetching players:', error)
     return NextResponse.json(

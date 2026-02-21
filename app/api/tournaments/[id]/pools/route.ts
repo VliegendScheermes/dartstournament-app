@@ -38,7 +38,9 @@ export async function GET(
       orderBy: { name: 'asc' }
     })
 
-    return NextResponse.json(pools)
+    return NextResponse.json(pools, {
+      headers: { 'Cache-Control': 'no-store' }
+    })
   } catch (error) {
     console.error('Error fetching pools:', error)
     return NextResponse.json(

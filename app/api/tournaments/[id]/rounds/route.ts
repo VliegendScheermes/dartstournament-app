@@ -31,7 +31,9 @@ export async function GET(
       orderBy: { index: 'asc' }
     })
 
-    return NextResponse.json(rounds)
+    return NextResponse.json(rounds, {
+      headers: { 'Cache-Control': 'no-store' }
+    })
   } catch (error) {
     console.error('Error fetching rounds:', error)
     return NextResponse.json(

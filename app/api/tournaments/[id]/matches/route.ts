@@ -46,7 +46,9 @@ export async function GET(
       ]
     })
 
-    return NextResponse.json(matches)
+    return NextResponse.json(matches, {
+      headers: { 'Cache-Control': 'no-store' }
+    })
   } catch (error) {
     console.error('Error fetching matches:', error)
     return NextResponse.json(

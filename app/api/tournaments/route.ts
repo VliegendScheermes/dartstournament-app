@@ -29,7 +29,9 @@ export async function GET(request: NextRequest) {
       orderBy: { createdAt: 'desc' }
     })
 
-    return NextResponse.json(tournaments)
+    return NextResponse.json(tournaments, {
+      headers: { 'Cache-Control': 'no-store' }
+    })
   } catch (error) {
     console.error('Error fetching tournaments:', error)
     return NextResponse.json(

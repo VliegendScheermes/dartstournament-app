@@ -47,7 +47,9 @@ export async function GET(
       )
     }
 
-    return NextResponse.json(tournament)
+    return NextResponse.json(tournament, {
+      headers: { 'Cache-Control': 'no-store' }
+    })
   } catch (error) {
     console.error('Error fetching tournament:', error)
     return NextResponse.json(
