@@ -36,6 +36,7 @@ export default function FinalsPage({ params }: FinalsPageProps) {
   const [archiveModal, setArchiveModal] = useState(false);
   const [deleteModal, setDeleteModal] = useState(false);
   const [resetModal, setResetModal] = useState(false);
+  const [resetTrigger, setResetTrigger] = useState(0);
 
   // Track last generated assignments to prevent infinite loops
   const lastGeneratedRef = useRef<string>('');
@@ -137,7 +138,7 @@ export default function FinalsPage({ params }: FinalsPageProps) {
     };
 
     generateFinalsMatches();
-  }, [id, assignmentsHash, getStandings, setMatches, isHydrated]);
+  }, [id, assignmentsHash, getStandings, setMatches, isHydrated, resetTrigger]);
 
   if (!isHydrated || isLoading) {
     return (
@@ -306,21 +307,21 @@ export default function FinalsPage({ params }: FinalsPageProps) {
     router.push('/');
   };
 
-  const handleReset = () => {
-    // Remove all CROSS and LOSERS matches to regenerate finals
-    const poolMatches = tournament.matches.filter(
-      (m) => m.stage === 'POOL'
-    );
-    setMatches(id, poolMatches);
-    setResetModal(false);
-
-    // Clear the ref so finals can be regenerated
-    lastGeneratedRef.current = '';
+  const handleReset = async () => {
+    // Remove all CROSS and LOSERS matches from DB
+    const poolMatches = tournament.matches.filter((m) => m.stage === 'POOL');
+    await setMatches(id, poolMatches);
 
     // Reset tournament status to pool-play if it was completed
     if (tournament.status === 'completed') {
-      updateStatus(id, 'pool-play');
+      await updateStatus(id, 'pool-play');
     }
+
+    // Clear the ref and bump the trigger so the generation effect re-runs
+    lastGeneratedRef.current = '';
+    setResetTrigger(c => c + 1);
+
+    setResetModal(false);
   };
 
   // Find champion and loser
