@@ -13,6 +13,7 @@ interface LiveViewerPageProps {
 export default function LiveViewerPage({ params }: LiveViewerPageProps) {
   const { id } = use(params);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [isLoadingData, setIsLoadingData] = useState(true);
   const [opacity, setOpacity] = useState(1);
   const [debugMode, setDebugMode] = useState(false);
   const prevStatusRef = useRef<string | undefined>(undefined);
@@ -27,9 +28,17 @@ export default function LiveViewerPage({ params }: LiveViewerPageProps) {
 
   // Poll public API every 3s (no auth required — works for OBS, public viewers)
   useEffect(() => {
-    loadTournamentPublic(id);
+    let cancelled = false;
+    const doFirstLoad = async () => {
+      await loadTournamentPublic(id);
+      if (!cancelled) setIsLoadingData(false);
+    };
+    doFirstLoad();
     const interval = setInterval(() => loadTournamentPublic(id), 3000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [id, loadTournamentPublic]);
 
   useEffect(() => {
@@ -49,7 +58,7 @@ export default function LiveViewerPage({ params }: LiveViewerPageProps) {
     return () => clearTimeout(timer);
   }, [tournament?.status]);
 
-  if (!isHydrated) {
+  if (!isHydrated || isLoadingData) {
     return (
       <div style={{ minHeight: '100vh', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <p style={{ color: '#d4af37', fontFamily: 'Georgia, serif' }}>Loading...</p>

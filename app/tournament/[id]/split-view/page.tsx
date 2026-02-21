@@ -25,6 +25,7 @@ interface SplitViewPageProps {
 export default function SplitViewPage({ params }: SplitViewPageProps) {
   const { id } = use(params);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [isLoadingData, setIsLoadingData] = useState(true);
   const prevStatusRef = useRef<string | undefined>(undefined);
   const [opacity, setOpacity] = useState(1);
 
@@ -37,9 +38,17 @@ export default function SplitViewPage({ params }: SplitViewPageProps) {
 
   // Poll public API every 3s (no auth required — works for OBS, public viewers)
   useEffect(() => {
-    loadTournamentPublic(id);
+    let cancelled = false;
+    const doFirstLoad = async () => {
+      await loadTournamentPublic(id);
+      if (!cancelled) setIsLoadingData(false);
+    };
+    doFirstLoad();
     const interval = setInterval(() => loadTournamentPublic(id), 3000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [id, loadTournamentPublic]);
 
   // Fade transition only when status actually changes between real values (not on initial load)
@@ -55,7 +64,7 @@ export default function SplitViewPage({ params }: SplitViewPageProps) {
     return () => clearTimeout(timer);
   }, [tournament?.status]);
 
-  if (!isHydrated) return null;
+  if (!isHydrated || isLoadingData) return null;
 
   const status = tournament?.status ?? 'setup';
 
