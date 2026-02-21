@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 
 /**
- * Next.js Middleware — runs before every request.
+ * Next.js Middleware — runs on the Edge before every page request.
  *
  * Public routes (no login required):
  *   /login, /register
@@ -11,42 +11,44 @@ import { createServerClient } from '@supabase/ssr'
  *   /tournament/[id]/split-view    — OBS split-screen source
  *
  * All other pages redirect to /login when not authenticated.
- * API routes are skipped — they handle auth themselves via requireAuth (Bearer token).
+ * API routes are always skipped — they handle auth via requireAuth (Bearer token).
  */
-
-// Pages that are always publicly accessible
-const PUBLIC_PAGE_PATTERNS: RegExp[] = [
-  /^\/login(\/|$)/,
-  /^\/register(\/|$)/,
-  /^\/tournament\/[^/]+\/live-viewer(\/|$)/,
-  /^\/tournament\/[^/]+\/obs-overlay(\/|$)/,
-  /^\/tournament\/[^/]+\/split-view(\/|$)/,
-]
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // Skip static assets and Next.js internals
+  // Skip Next.js internals and static files
   if (
     pathname.startsWith('/_next/') ||
     pathname.startsWith('/images/') ||
-    pathname.startsWith('/sounds/') ||
-    pathname.match(/\.[a-zA-Z0-9]+$/) // files with extensions (favicon.ico, etc.)
+    pathname.startsWith('/sounds/')
   ) {
     return NextResponse.next()
   }
 
-  // API routes handle their own auth via requireAuth (Bearer token) — skip middleware
+  // API routes handle their own auth via requireAuth (Bearer token)
   if (pathname.startsWith('/api/')) {
     return NextResponse.next()
   }
 
-  // Always allow public pages without auth
-  if (PUBLIC_PAGE_PATTERNS.some(pattern => pattern.test(pathname))) {
+  // Public pages — always allow without auth
+  // Check by splitting on '/' so we match exact path segments
+  const segments = pathname.split('/')
+  const lastSegment = segments[segments.length - 1] || segments[segments.length - 2]
+
+  if (
+    pathname === '/login' ||
+    pathname.startsWith('/login/') ||
+    pathname === '/register' ||
+    pathname.startsWith('/register/') ||
+    lastSegment === 'live-viewer' ||
+    lastSegment === 'obs-overlay' ||
+    lastSegment === 'split-view'
+  ) {
     return NextResponse.next()
   }
 
-  // For all other pages: check Supabase session and redirect if not logged in
+  // All other pages — check Supabase session, redirect to /login if not authenticated
   const response = NextResponse.next()
 
   const supabase = createServerClient(
@@ -64,9 +66,9 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  const { data: { session } } = await supabase.auth.getSession()
+  const { data: { user } } = await supabase.auth.getUser()
 
-  if (!session) {
+  if (!user) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
@@ -74,6 +76,8 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // Apply to all routes except Next.js static files
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: [
+    // Apply to all routes except Next.js build output and common static files
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|wav|mp3)).*)',
+  ],
 }
