@@ -12,6 +12,7 @@ import { StandingsTable } from '@/components/tournament/StandingsTable';
 import { MatchSchedule } from '@/components/tournament/MatchSchedule';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { generateAllPoolSchedules } from '@/lib/algorithms/roundRobin';
 
 interface PoolPlayPageProps {
   params: Promise<{ id: string }>;
@@ -129,15 +130,26 @@ export default function PoolPlayPage({ params }: PoolPlayPageProps) {
     if (!confirm('Reset pool phase? This will clear all match scores and results. This cannot be undone.')) return;
 
     try {
-      // Clear all pool match scores and confirmations
-      const resetMatches = tournament.matches.map((m) =>
-        m.stage === 'POOL' ? { ...m, legsP1: null, legsP2: null, confirmed: false } : m
-      );
-      await setMatches(id, resetMatches);
+      const existingPoolMatches = tournament.matches.filter((m) => m.stage === 'POOL');
 
-      // Reset all rounds
-      const resetRounds = tournament.rounds.map((r) => ({ ...r, savedAll: false }));
-      await setRounds(id, resetRounds);
+      if (existingPoolMatches.length === 0) {
+        // No pool matches exist — regenerate them from the pools
+        const { matches: generated, rounds: generatedRounds } = generateAllPoolSchedules(
+          tournament.pools,
+          tournament.players
+        );
+        const nonPoolMatches = tournament.matches.filter((m) => m.stage !== 'POOL');
+        await setMatches(id, [...nonPoolMatches, ...generated]);
+        await setRounds(id, generatedRounds);
+      } else {
+        // Pool matches exist — just reset their scores
+        const resetMatches = tournament.matches.map((m) =>
+          m.stage === 'POOL' ? { ...m, legsP1: null, legsP2: null, confirmed: false } : m
+        );
+        await setMatches(id, resetMatches);
+        const resetRounds = tournament.rounds.map((r) => ({ ...r, savedAll: false }));
+        await setRounds(id, resetRounds);
+      }
 
       // Revert status to pool-play if it advanced further
       if (tournament.status === 'finals' || tournament.status === 'completed') {
