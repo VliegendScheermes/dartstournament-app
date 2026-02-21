@@ -6,17 +6,19 @@
 'use client';
 
 import React from 'react';
-import { Match, Player, Round } from '@/types/tournament';
+import { Match, Player, Pool, Round } from '@/types/tournament';
 
 interface ViewerMatchScheduleProps {
   matches: Match[];
   rounds: Round[];
   players: Player[];
+  pools?: Pool[];
 }
 
 export const ViewerMatchSchedule: React.FC<ViewerMatchScheduleProps> = ({
   matches,
   players,
+  pools = [],
 }) => {
   const poolMatches = matches.filter((m) => m.stage === 'POOL');
 
@@ -31,7 +33,8 @@ export const ViewerMatchSchedule: React.FC<ViewerMatchScheduleProps> = ({
 
   const getPoolName = (match: Match): string => {
     if (!match.poolId) return 'Pool match';
-    return `Poule ${match.poolId}`;
+    const pool = pools.find((p) => p.id === match.poolId);
+    return pool?.name ?? `Poule ${match.poolId}`;
   };
 
   return (

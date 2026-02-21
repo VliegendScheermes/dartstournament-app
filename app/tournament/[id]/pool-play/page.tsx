@@ -333,6 +333,7 @@ export default function PoolPlayPage({ params }: PoolPlayPageProps) {
             <MatchSchedule
               poolId="ALL"
               poolName="All Pools"
+              pools={tournament.pools}
               matches={tournament.matches}
               rounds={tournament.rounds}
               players={tournament.players}

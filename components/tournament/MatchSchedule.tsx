@@ -8,11 +8,12 @@
 import React, { useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Match, Player, Round } from '@/types/tournament';
+import { Match, Player, Pool, Round } from '@/types/tournament';
 
 interface MatchScheduleProps {
   poolId: string;
   poolName: string;
+  pools?: Pool[];
   matches: Match[];
   rounds: Round[];
   players: Player[];
@@ -26,6 +27,7 @@ interface MatchScheduleProps {
 export const MatchSchedule: React.FC<MatchScheduleProps> = ({
   poolId,
   poolName,
+  pools = [],
   matches,
   rounds,
   players,
@@ -57,7 +59,8 @@ export const MatchSchedule: React.FC<MatchScheduleProps> = ({
 
   const getPoolName = (match: Match): string => {
     if (!match.poolId) return 'Pool match';
-    return `Poule ${match.poolId}`;
+    const pool = pools.find((p) => p.id === match.poolId);
+    return pool?.name ?? `Poule ${match.poolId}`;
   };
 
   const handleScoreChange = (matchId: string, player: 'p1' | 'p2', value: string) => {

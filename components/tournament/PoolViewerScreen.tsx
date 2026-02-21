@@ -143,6 +143,7 @@ export function PoolViewerScreen({ id }: { id: string }) {
               matches={poolMatches}
               rounds={tournament.rounds}
               players={tournament.players}
+              pools={tournament.pools}
             />
           </div>
         </div>
