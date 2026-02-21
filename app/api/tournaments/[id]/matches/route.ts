@@ -95,7 +95,7 @@ export async function POST(
         legsP1: body.legsP1 || null,
         legsP2: body.legsP2 || null,
         confirmed: body.confirmed || false,
-        boardNumber: body.boardNumber || null
+        boardNumber: body.boardNumber != null ? (parseInt(String(body.boardNumber), 10) || null) : null
       }
     })
 
@@ -155,7 +155,7 @@ export async function PUT(
             legsP1: match.legsP1 ?? null,
             legsP2: match.legsP2 ?? null,
             confirmed: match.confirmed ?? false,
-            boardNumber: match.boardNumber ?? null,
+            boardNumber: match.boardNumber != null ? (parseInt(String(match.boardNumber), 10) || null) : null,
           }))
         })
       }
