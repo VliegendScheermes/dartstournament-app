@@ -47,10 +47,10 @@ export async function PATCH(
     const updatedMatch = await prisma.match.update({
       where: { id: matchId },
       data: {
-        ...(body.legsP1 !== undefined && { legsP1: body.legsP1 }),
-        ...(body.legsP2 !== undefined && { legsP2: body.legsP2 }),
+        ...(body.legsP1 !== undefined && { legsP1: body.legsP1 !== null ? parseInt(String(body.legsP1), 10) : null }),
+        ...(body.legsP2 !== undefined && { legsP2: body.legsP2 !== null ? parseInt(String(body.legsP2), 10) : null }),
         ...(body.confirmed !== undefined && { confirmed: body.confirmed }),
-        ...(body.boardNumber !== undefined && { boardNumber: body.boardNumber }),
+        ...(body.boardNumber !== undefined && { boardNumber: body.boardNumber !== null ? (parseInt(String(body.boardNumber), 10) || null) : null }),
         ...(body.roundIndex !== undefined && { roundIndex: body.roundIndex }),
         ...(body.poolId !== undefined && { poolId: body.poolId }),
         ...(body.stage !== undefined && { stage: body.stage }),
@@ -60,10 +60,10 @@ export async function PATCH(
     })
 
     return NextResponse.json(updatedMatch)
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error updating match:', error)
     return NextResponse.json(
-      { error: 'Failed to update match' },
+      { error: 'Failed to update match', detail: error?.message ?? String(error) },
       { status: 500 }
     )
   }
