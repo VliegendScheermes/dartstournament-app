@@ -381,15 +381,32 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
   // Sync live state to localStorage (same-browser tab) AND to API (OBS overlay)
   const apiWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionTokenRef = useRef<string | null>(null);
+  const latestPayloadRef = useRef<object | null>(null);
 
-  // Fetch and cache the session token once on mount
+  const postToApi = (token: string, payload: object) => {
+    fetch(`/api/tournaments/${id}/live-match`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    }).catch(() => { /* ignore network errors */ });
+  };
+
+  // Fetch and cache the session token once on mount; after loading, immediately push current state
   useEffect(() => {
     const getToken = async () => {
       const supabase = createClient();
       const { data: { session } } = await supabase.auth.getSession();
       sessionTokenRef.current = session?.access_token ?? null;
+      // Push current state immediately now that we have the token
+      if (sessionTokenRef.current && latestPayloadRef.current) {
+        postToApi(sessionTokenRef.current, latestPayloadRef.current);
+      }
     };
     getToken();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -416,6 +433,9 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
       barneyFrame: barneyAnim ? { src: barneyAnim.src, ts: barneyAnim.key } : null,
     };
 
+    // Always keep latest payload in ref (for post-token-load push)
+    latestPayloadRef.current = payload;
+
     // Write to localStorage (for same-browser tab fallback)
     localStorage.setItem(`darts-scoreboard-${id}`, JSON.stringify(payload));
 
@@ -423,14 +443,7 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
     if (apiWriteTimerRef.current) clearTimeout(apiWriteTimerRef.current);
     apiWriteTimerRef.current = setTimeout(() => {
       if (!sessionTokenRef.current) return;
-      fetch(`/api/tournaments/${id}/live-match`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sessionTokenRef.current}`,
-        },
-        body: JSON.stringify(payload),
-      }).catch(() => { /* ignore network errors */ });
+      postToApi(sessionTokenRef.current, payload);
     }, 400);
   }, [players, activePlayer, settings, tournamentName, id, frontendVolume, barneyAnim]);
 
