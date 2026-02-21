@@ -30,7 +30,7 @@ export class ApiClient {
       }
 
       const error = await response.json().catch(() => ({ error: response.statusText }))
-      throw new Error(error.error || `API error: ${response.statusText}`)
+      throw new Error(`${error.error || `API error: ${response.statusText}`}${error.detail ? ` — ${error.detail}` : ''}`)
     }
 
     return response.json()

@@ -162,10 +162,10 @@ export async function PUT(
     })
 
     return NextResponse.json({ success: true })
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error updating matches:', error)
     return NextResponse.json(
-      { error: 'Failed to update matches' },
+      { error: 'Failed to update matches', detail: error?.message ?? String(error) },
       { status: 500 }
     )
   }
