@@ -63,19 +63,47 @@ export function selectFinalists(
 }
 
 /**
- * Generate cross-finals bracket (standard elimination - winner advances)
+ * Pair players greedily, avoiding same-pool matchups.
+ * Any unavoidable same-pool matches are placed at the end of the list.
+ */
+function pairAvoidingSamePool(
+  players: { poolId: string; playerId: string; rank: number }[]
+): [{ poolId: string; playerId: string; rank: number }, { poolId: string; playerId: string; rank: number }][] {
+  const crossPairs: [typeof players[0], typeof players[0]][] = [];
+  const samePairs: [typeof players[0], typeof players[0]][] = [];
+  const unmatched = [...players];
+
+  while (unmatched.length >= 2) {
+    const player = unmatched.shift()!;
+    const diffPoolIdx = unmatched.findIndex((p) => p.poolId !== player.poolId);
+
+    if (diffPoolIdx !== -1) {
+      const opponent = unmatched.splice(diffPoolIdx, 1)[0];
+      crossPairs.push([player, opponent]);
+    } else {
+      // All remaining players are from the same pool — unavoidable same-pool match
+      const opponent = unmatched.shift()!;
+      samePairs.push([player, opponent]);
+    }
+  }
+
+  // Same-pool matches go last
+  return [...crossPairs, ...samePairs];
+}
+
+/**
+ * Generate cross-finals bracket (standard elimination - winner advances).
+ * Seeding ensures same-pool players do NOT meet in round 1 if avoidable.
+ * For balanced brackets (equal rank-1 and rank-2 counts), uses rotation seeding:
+ *   A1 vs B2, B1 vs C2, C1 vs D2, D1 vs A2 — no same-pool first-round matches.
+ * Any unavoidable same-pool matches are placed last in the round.
  */
 export function generateCrossFinalsMatches(
   finalists: { poolId: string; playerId: string; rank: number }[]
 ): Match[] {
   const matches: Match[] = [];
-  const numPlayers = finalists.length;
 
-  if (numPlayers < 2) return matches;
-
-  // Seeding: pair players from different pools
-  // For 8 players (2 from 4 pools): A1 vs B2, B1 vs A2, C1 vs D2, D1 vs C2
-  // For other configurations: group by rank and alternate pools
+  if (finalists.length < 2) return matches;
 
   const byRank: { [rank: number]: typeof finalists } = {};
   finalists.forEach((f) => {
@@ -83,88 +111,75 @@ export function generateCrossFinalsMatches(
     byRank[f.rank].push(f);
   });
 
-  // Create first round pairings
-  let roundIndex = 1;
-  const firstRoundPlayers: string[] = [];
-
-  // Pair rank 1 with rank 2 from different pools
   const rank1Players = byRank[1] || [];
   const rank2Players = byRank[2] || [];
 
-  // Simple seeding: alternate between rank groups
-  for (let i = 0; i < rank1Players.length; i++) {
-    if (i < rank2Players.length) {
-      const player1 = rank1Players[i];
-      const player2 = rank2Players[i];
+  let pairings: [typeof finalists[0], typeof finalists[0]][];
 
-      // Ensure they're from different pools
-      if (player1.poolId !== player2.poolId) {
-        matches.push({
-          id: uuidv4(),
-          roundIndex,
-          stage: 'CROSS',
-          player1Id: player1.playerId,
-          player2Id: player2.playerId,
-          legsP1: null,
-          legsP2: null,
-          confirmed: false,
-        });
-        firstRoundPlayers.push(player1.playerId, player2.playerId);
+  if (rank1Players.length > 0 && rank1Players.length === rank2Players.length) {
+    // Balanced bracket: rotate rank-2 list by 1 so rank1[i] faces rank2[i+1 mod n].
+    // With pools ordered A,B,C,D this gives A1 vs B2, B1 vs C2, C1 vs D2, D1 vs A2.
+    const rotatedRank2 = [...rank2Players.slice(1), rank2Players[0]];
+    const crossPairs: [typeof finalists[0], typeof finalists[0]][] = [];
+    const samePairs: [typeof finalists[0], typeof finalists[0]][] = [];
+
+    for (let i = 0; i < rank1Players.length; i++) {
+      const p1 = rank1Players[i];
+      const p2 = rotatedRank2[i];
+      if (p1.poolId !== p2.poolId) {
+        crossPairs.push([p1, p2]);
+      } else {
+        // Single-pool tournament edge case — unavoidable
+        samePairs.push([p1, p2]);
       }
     }
+    pairings = [...crossPairs, ...samePairs];
+  } else {
+    // Unbalanced or mixed-rank finalists — greedy pool-avoiding pairing
+    pairings = pairAvoidingSamePool(finalists);
   }
 
-  // If we have players left, create additional matches
-  const remainingPlayers = finalists.filter(
-    (f) => !firstRoundPlayers.includes(f.playerId)
-  );
-
-  for (let i = 0; i < remainingPlayers.length; i += 2) {
-    if (i + 1 < remainingPlayers.length) {
-      matches.push({
-        id: uuidv4(),
-        roundIndex,
-        stage: 'CROSS',
-        player1Id: remainingPlayers[i].playerId,
-        player2Id: remainingPlayers[i + 1].playerId,
-        legsP1: null,
-        legsP2: null,
-        confirmed: false,
-      });
-    }
+  for (const [p1, p2] of pairings) {
+    matches.push({
+      id: uuidv4(),
+      roundIndex: 1,
+      stage: 'CROSS',
+      player1Id: p1.playerId,
+      player2Id: p2.playerId,
+      legsP1: null,
+      legsP2: null,
+      confirmed: false,
+    });
   }
 
   return matches;
 }
 
 /**
- * Generate losers bracket (inverted elimination - loser advances)
- * Simple single-elimination format where losers advance
+ * Generate losers bracket (inverted elimination - loser advances).
+ * Seeding avoids same-pool matchups in round 1; unavoidable same-pool
+ * matches are placed last in the round.
  */
 export function generateLosersBracketMatches(
   finalists: { poolId: string; playerId: string; rank: number }[]
 ): Match[] {
   const matches: Match[] = [];
-  const numPlayers = finalists.length;
 
-  if (numPlayers < 2) return matches;
+  if (finalists.length < 2) return matches;
 
-  // Standard single-elimination pairing
-  const roundIndex = 1;
+  const pairings = pairAvoidingSamePool(finalists);
 
-  for (let i = 0; i < numPlayers; i += 2) {
-    if (i + 1 < numPlayers) {
-      matches.push({
-        id: uuidv4(),
-        roundIndex,
-        stage: 'LOSERS',
-        player1Id: finalists[i].playerId,
-        player2Id: finalists[i + 1].playerId,
-        legsP1: null,
-        legsP2: null,
-        confirmed: false,
-      });
-    }
+  for (const [p1, p2] of pairings) {
+    matches.push({
+      id: uuidv4(),
+      roundIndex: 1,
+      stage: 'LOSERS',
+      player1Id: p1.playerId,
+      player2Id: p2.playerId,
+      legsP1: null,
+      legsP2: null,
+      confirmed: false,
+    });
   }
 
   console.log(`Generated ${matches.length} losers bracket matches for round 1`);

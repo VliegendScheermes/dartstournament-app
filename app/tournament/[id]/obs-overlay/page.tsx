@@ -100,7 +100,7 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
 
     const pollApi = async () => {
       try {
-        const response = await fetch(`/api/tournaments/${id}/live-match`);
+        const response = await fetch(`/api/tournaments/${id}/live-match`, { cache: 'no-store' });
         if (!response.ok) return;
         const newData: LiveScoreData | null = await response.json();
 
