@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db/prisma'
+import { tournamentInclude } from '@/lib/db/tournamentInclude'
 
 // GET /api/tournaments/[id]/public - Public read-only access (no authentication required)
 // Used by viewer pages (live-viewer, split-view, OBS sources) that must be accessible
@@ -13,25 +14,9 @@ export async function GET(
   try {
     const tournament = await prisma.tournament.findFirst({
       where: { id },
-      include: {
-        players: true,
-        pools: {
-          include: {
-            players: {
-              include: {
-                player: true
-              }
-            }
-          }
-        },
-        matches: {
-          include: {
-            player1: true,
-            player2: true
-          }
-        },
-        rounds: true
-      }
+      // The owner's account id is not needed by viewers
+      omit: { userId: true },
+      include: tournamentInclude
     })
 
     if (!tournament) {

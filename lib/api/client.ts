@@ -1,13 +1,24 @@
 import { createClient } from '@/lib/auth/supabase'
 
 export class ApiClient {
+  // Requests run one at a time, in the order they were made. The store updates the
+  // UI optimistically, so a quick follow-up (e.g. confirming a match that was just
+  // created) must not reach the server before the request that creates it.
+  private queue: Promise<unknown> = Promise.resolve()
+
   private async getAuthHeader(): Promise<string | null> {
     const supabase = createClient()
     const { data: { session } } = await supabase.auth.getSession()
     return session?.access_token ? `Bearer ${session.access_token}` : null
   }
 
-  async fetch<T = any>(path: string, options?: RequestInit): Promise<T> {
+  fetch<T = any>(path: string, options?: RequestInit): Promise<T> {
+    const request = this.queue.then(() => this.send<T>(path, options))
+    this.queue = request.catch(() => undefined)
+    return request
+  }
+
+  private async send<T>(path: string, options?: RequestInit): Promise<T> {
     const authHeader = await this.getAuthHeader()
 
     if (!authHeader) {

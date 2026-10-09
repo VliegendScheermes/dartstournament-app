@@ -73,22 +73,32 @@ export const MatchSchedule: React.FC<MatchScheduleProps> = ({
     }));
   };
 
-  const handleConfirmClick = (match: Match) => {
+  // Scores to save for a match (typed scores win over saved ones), or the reason they're invalid
+  const getScores = (match: Match): { p1: number; p2: number } | string => {
     const scores = localScores[match.id];
     const p1 = scores?.p1 ? parseInt(scores.p1) : match.legsP1;
     const p2 = scores?.p2 ? parseInt(scores.p2) : match.legsP2;
 
     if (p1 === null || p2 === null || isNaN(p1) || isNaN(p2)) {
-      alert('Please enter valid scores for both players');
-      return;
+      return 'Please enter valid scores for both players';
     }
-
     if (p1 < 0 || p2 < 0) {
-      alert('Scores must be positive numbers');
+      return 'Scores must be positive numbers';
+    }
+    if (p1 === p2) {
+      return 'Scores cannot be equal - there must be a winner';
+    }
+    return { p1, p2 };
+  };
+
+  const handleConfirmClick = (match: Match) => {
+    const scores = getScores(match);
+    if (typeof scores === 'string') {
+      alert(scores);
       return;
     }
 
-    onMatchUpdate(match.id, p1, p2);
+    onMatchUpdate(match.id, scores.p1, scores.p2);
     onMatchConfirm(match.id);
     setEditingMatch(null);
     setLocalScores((prev) => {
@@ -124,45 +134,24 @@ export const MatchSchedule: React.FC<MatchScheduleProps> = ({
   const handleSaveRoundClick = (roundIndex: number) => {
     const roundMatches = poolMatches.filter((m) => m.roundIndex === roundIndex);
 
-    // Check if all matches have scores (either confirmed or in localScores)
-    const allFilled = roundMatches.every((match) => {
-      // Check if match already has confirmed scores
-      if (match.legsP1 !== null && match.legsP2 !== null) {
-        return true;
-      }
+    // Every unconfirmed match needs valid scores before the round is saved
+    const toConfirm = roundMatches
+      .filter((match) => !match.confirmed)
+      .map((match) => ({ match, scores: getScores(match) }));
 
-      // Check if match has valid local scores entered
-      const scores = localScores[match.id];
-      if (scores &&
-          scores.p1 !== undefined && scores.p1 !== '' &&
-          scores.p2 !== undefined && scores.p2 !== '') {
-        return true;
-      }
-
-      return false;
-    });
-
-    if (!allFilled) {
-      alert('Please enter scores for all matches in this round');
+    const invalid = toConfirm.find(({ scores }) => typeof scores === 'string');
+    if (invalid) {
+      alert(
+        `${getPlayerName(invalid.match.player1Id)} vs ${getPlayerName(invalid.match.player2Id)}: ${invalid.scores}`
+      );
       return;
     }
 
     // Update and confirm all matches in the round
-    roundMatches.forEach((match) => {
-      if (!match.confirmed) {
-        // If scores are in localScores, update the match first
-        const scores = localScores[match.id];
-        if (scores &&
-            scores.p1 !== undefined && scores.p1 !== '' &&
-            scores.p2 !== undefined && scores.p2 !== '') {
-          const p1 = parseInt(scores.p1);
-          const p2 = parseInt(scores.p2);
-          if (!isNaN(p1) && !isNaN(p2) && p1 >= 0 && p2 >= 0) {
-            onMatchUpdate(match.id, p1, p2);
-          }
-        }
-        onMatchConfirm(match.id);
-      }
+    toConfirm.forEach(({ match, scores }) => {
+      if (typeof scores === 'string') return;
+      onMatchUpdate(match.id, scores.p1, scores.p2);
+      onMatchConfirm(match.id);
     });
 
     // Clear local scores for this round

@@ -26,14 +26,20 @@ export async function PATCH(
 
     const body = await request.json()
 
-    const updated = await prisma.pool.update({
-      where: { id: poolId },
+    // Scope the update to this tournament so a pool of another tournament can't be changed
+    const result = await prisma.pool.updateMany({
+      where: { id: poolId, tournamentId: id },
       data: {
         ...(body.boardNumber !== undefined && { boardNumber: body.boardNumber }),
         ...(body.name !== undefined && { name: body.name }),
       }
     })
 
+    if (result.count === 0) {
+      return NextResponse.json({ error: 'Pool not found' }, { status: 404 })
+    }
+
+    const updated = await prisma.pool.findUnique({ where: { id: poolId } })
     return NextResponse.json(updated)
   } catch (error) {
     console.error('Error patching pool:', error)

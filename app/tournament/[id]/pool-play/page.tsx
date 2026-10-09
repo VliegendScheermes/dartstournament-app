@@ -8,11 +8,13 @@
 import React, { use, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTournamentStore } from '@/lib/store/tournamentStore';
+import { errorMessage } from '@/lib/errorMessage';
 import { StandingsTable } from '@/components/tournament/StandingsTable';
 import { MatchSchedule } from '@/components/tournament/MatchSchedule';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { generateAllPoolSchedules } from '@/lib/algorithms/roundRobin';
+import { generateFinals } from '@/lib/algorithms/finals';
 
 interface PoolPlayPageProps {
   params: Promise<{ id: string }>;
@@ -35,6 +37,7 @@ export default function PoolPlayPage({ params }: PoolPlayPageProps) {
     setRounds,
     setFinalsAssignment,
     getFinalsAssignment,
+    updateDrawState,
     isLoading,
     error,
   } = useTournamentStore();
@@ -53,7 +56,9 @@ export default function PoolPlayPage({ params }: PoolPlayPageProps) {
     }
   }, [id, isHydrated, loadTournament]);
 
-  if (!isHydrated || isLoading) {
+  // Only block the page on the first load; reloads after a failed save must not
+  // unmount the schedule (typed scores would be lost)
+  if (!isHydrated || (isLoading && !tournament)) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -64,7 +69,7 @@ export default function PoolPlayPage({ params }: PoolPlayPageProps) {
     );
   }
 
-  if (error || !tournament) {
+  if (!tournament) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -127,36 +132,41 @@ export default function PoolPlayPage({ params }: PoolPlayPageProps) {
   };
 
   const handleResetPoolPhase = async () => {
-    if (!confirm('Reset pool phase? This will clear all match scores and results. This cannot be undone.')) return;
+    if (!confirm('Reset pool phase? This will clear all match scores and results, and remove the finals. This cannot be undone.')) return;
 
     try {
       const existingPoolMatches = tournament.matches.filter((m) => m.stage === 'POOL');
 
+      // The finals were based on the old results, so they are removed as well
       if (existingPoolMatches.length === 0) {
         // No pool matches exist — regenerate them from the pools
         const { matches: generated, rounds: generatedRounds } = generateAllPoolSchedules(
           tournament.pools,
           tournament.players
         );
-        const nonPoolMatches = tournament.matches.filter((m) => m.stage !== 'POOL');
-        await setMatches(id, [...nonPoolMatches, ...generated]);
+        await setMatches(id, generated);
         await setRounds(id, generatedRounds);
       } else {
         // Pool matches exist — just reset their scores
-        const resetMatches = tournament.matches.map((m) =>
-          m.stage === 'POOL' ? { ...m, legsP1: null, legsP2: null, confirmed: false } : m
-        );
+        const resetMatches = existingPoolMatches.map((m) => ({ ...m, legsP1: null, legsP2: null, confirmed: false }));
         await setMatches(id, resetMatches);
         const resetRounds = tournament.rounds.map((r) => ({ ...r, savedAll: false }));
         await setRounds(id, resetRounds);
       }
 
+      if (tournament.drawState?.finalsBracket) {
+        const drawState = { ...tournament.drawState };
+        delete drawState.finalsBracket;
+        await updateDrawState(id, drawState);
+      }
+
       // Revert status to pool-play if it advanced further
-      if (tournament.status === 'finals' || tournament.status === 'completed') {
+      if (tournament.status !== 'pool-play') {
         await updateStatus(id, 'pool-play');
       }
     } catch (error) {
       console.error('Failed to reset pool phase:', error);
+      alert(`Reset mislukt: ${errorMessage(error)}`);
     }
   };
 
@@ -170,11 +180,37 @@ export default function PoolPlayPage({ params }: PoolPlayPageProps) {
       return;
     }
 
+    const existingFinals = tournament.matches.filter((m) => m.stage !== 'POOL');
+    if (existingFinals.length > 0 && !confirm('Er bestaan al finales. Opnieuw genereren? Alle finale-uitslagen gaan verloren.')) {
+      return;
+    }
+
     try {
+      // The brackets are generated here, before the finals page opens, so that
+      // page never has to generate (and race with) its own data load
+      const standings = Object.fromEntries(
+        tournament.pools.map((pool) => [pool.id, getStandings(id, pool.id)])
+      );
+      const { matches: finalsMatches, bracket } = generateFinals(
+        tournament.pools,
+        standings,
+        tournament.settings.advanceToCrossFinals,
+        tournament.settings.advanceToLosersFinal,
+        tournament.drawState?.finalsAssignments
+      );
+
+      if ((bracket.CROSS?.length ?? 0) < 2) {
+        alert('Er zijn minder dan 2 spelers voor de kruisfinales. Controleer de instellingen en handmatige toewijzingen.');
+        return;
+      }
+
+      await setMatches(id, [...poolMatches, ...finalsMatches]);
+      await updateDrawState(id, { ...(tournament.drawState ?? { status: 'complete' }), finalsBracket: bracket });
       await updateStatus(id, 'finals');
       router.push(`/tournament/${id}/finals`);
     } catch (error) {
       console.error('Failed to start finals:', error);
+      alert(`Finales starten mislukt: ${errorMessage(error)}`);
     }
   };
 

@@ -19,6 +19,12 @@ interface BracketViewProps {
   onMatchConfirm: (matchId: string, legsP1?: number, legsP2?: number) => void;
   onMatchEdit: (matchId: string) => void;
   onSaveRound?: (roundIndex: number, stage: 'CROSS' | 'LOSERS') => void;
+  // Round names by bracket size; without them rounds are named by their number of matches
+  roundNames?: { [roundIndex: number]: string };
+  // Players who advance without playing in a round
+  byes?: { roundIndex: number; playerId: string }[];
+  // Index of the bracket's last round (the final)
+  finalRoundIndex?: number;
 }
 
 export const BracketView: React.FC<BracketViewProps> = ({
@@ -31,6 +37,9 @@ export const BracketView: React.FC<BracketViewProps> = ({
   onMatchConfirm,
   onMatchEdit,
   onSaveRound,
+  roundNames,
+  byes = [],
+  finalRoundIndex,
 }) => {
   const [editingMatch, setEditingMatch] = useState<string | null>(null);
   const [recordedMatchId, setRecordedMatchId] = useState<string | null>(null);
@@ -126,7 +135,9 @@ export const BracketView: React.FC<BracketViewProps> = ({
     let baseName = '';
 
     // Name rounds based on number of matches in that round
-    if (matchesInRound === 1) {
+    if (roundNames?.[roundIndex]) {
+      baseName = roundNames[roundIndex];
+    } else if (matchesInRound === 1) {
       baseName = 'Final';
     } else if (matchesInRound === 2) {
       baseName = 'Semi Finals';
@@ -260,6 +271,19 @@ export const BracketView: React.FC<BracketViewProps> = ({
                 })}
               </div>
 
+              {/* Players with a bye in this round */}
+              {byes
+                .filter((bye) => bye.roundIndex === roundIndex)
+                .map((bye) => (
+                  <div
+                    key={`bye-${bye.playerId}`}
+                    className="mt-3 flex items-center gap-3 p-3 rounded-lg border border-dashed border-gray-300 bg-gray-50 text-sm text-gray-700"
+                  >
+                    <span className="font-medium text-gray-900">{getPlayerName(bye.playerId)}</span>
+                    <span>— vrijloting, gaat direct door naar de volgende ronde</span>
+                  </div>
+                ))}
+
               {/* Save Round Button */}
               {onSaveRound && roundMatches.every((m) => m.confirmed) && (
                 <div className="mt-3">
@@ -267,7 +291,9 @@ export const BracketView: React.FC<BracketViewProps> = ({
                     onClick={() => onSaveRound(roundIndex, isLosers ? 'LOSERS' : 'CROSS')}
                     className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
                   >
-                    Save {roundName} & Generate Next Round
+                    {roundIndex === finalRoundIndex
+                      ? `Save ${roundName}`
+                      : `Save ${roundName} & Generate Next Round`}
                   </button>
                 </div>
               )}

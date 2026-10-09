@@ -21,6 +21,12 @@ export async function requireAuth(request: Request) {
 
   const { data: { user }, error } = await supabase.auth.getUser(token)
 
+  // Supabase unreachable (network or server error): a temporary problem, not an
+  // invalid session, so don't answer 401 (the client would log the user out)
+  if (error && (!error.status || error.status >= 500)) {
+    return { error: 'Authentication service unavailable', status: 503 }
+  }
+
   if (error || !user) {
     return { error: 'Invalid token', status: 401 }
   }

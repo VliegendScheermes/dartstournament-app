@@ -5,24 +5,50 @@
 
 'use client';
 
-import React, { use, useEffect, useRef } from 'react';
+import React, { use, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTournamentStore } from '@/lib/store/tournamentStore';
+import { errorMessage } from '@/lib/errorMessage';
 import { BracketView } from '@/components/tournament/BracketView';
 import { WinnerDisplay } from '@/components/tournament/WinnerDisplay';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import {
-  selectFinalists,
-  generateCrossFinalsMatches,
-  generateLosersBracketMatches,
-  getMatchWinner,
-  getMatchLoser,
-  generateNextCrossRound,
-  generateNextLosersRound,
+  BracketState,
+  buildBracket,
+  FinalsStage,
+  generateFinals,
+  getBracketSlots,
+  syncBracketMatches,
 } from '@/lib/algorithms/finals';
 import { Match } from '@/types/tournament';
-import { useState } from 'react';
+
+// Matches of a bracket in bracket order, plus round names and byes for display
+function bracketDisplay(state: BracketState, stageMatches: Match[]) {
+  const ordered: Match[] = [];
+  const roundNames: { [roundIndex: number]: string } = {};
+  const byes: { roundIndex: number; playerId: string }[] = [];
+
+  for (const round of state.rounds) {
+    roundNames[round.roundIndex] = round.name;
+    for (const pair of round.pairs) {
+      if (pair.match) ordered.push(pair.match);
+      if (pair.player1Id === null && pair.player2Id) byes.push({ roundIndex: round.roundIndex, playerId: pair.player2Id });
+      if (pair.player2Id === null && pair.player1Id) byes.push({ roundIndex: round.roundIndex, playerId: pair.player1Id });
+    }
+  }
+  // Matches that no longer fit the bracket are kept visible until the round is saved again
+  stageMatches.forEach((match) => {
+    if (!ordered.includes(match)) ordered.push(match);
+  });
+
+  return {
+    matches: ordered,
+    roundNames,
+    byes,
+    finalRoundIndex: state.rounds.length > 0 ? state.rounds[state.rounds.length - 1].roundIndex : undefined,
+  };
+}
 
 interface FinalsPageProps {
   params: Promise<{ id: string }>;
@@ -36,10 +62,6 @@ export default function FinalsPage({ params }: FinalsPageProps) {
   const [archiveModal, setArchiveModal] = useState(false);
   const [deleteModal, setDeleteModal] = useState(false);
   const [resetModal, setResetModal] = useState(false);
-  const [resetTrigger, setResetTrigger] = useState(0);
-
-  // Track last generated assignments to prevent infinite loops
-  const lastGeneratedRef = useRef<string>('');
 
   const {
     loadTournament,
@@ -47,7 +69,6 @@ export default function FinalsPage({ params }: FinalsPageProps) {
     updateMatch,
     confirmMatch,
     unconfirmMatch,
-    saveRound,
     updateStatus,
     updateDrawState,
     archiveTournament,
@@ -58,11 +79,6 @@ export default function FinalsPage({ params }: FinalsPageProps) {
 
   const tournament = useTournamentStore(state => state.tournaments.find(t => t.id === id));
   const getStandings = useTournamentStore(state => state.getStandings);
-
-  // Extract assignment hash to prevent infinite loops
-  const assignmentsHash = tournament?.drawState?.finalsAssignments
-    ? JSON.stringify(tournament.drawState.finalsAssignments)
-    : '{}';
 
   useEffect(() => {
     setIsHydrated(true);
@@ -75,72 +91,25 @@ export default function FinalsPage({ params }: FinalsPageProps) {
     }
   }, [id, isHydrated, loadTournament]);
 
+  // Later rounds are derived from the stored round-1 slots and the results
+  const matches = tournament?.matches ?? [];
+  const crossSlots = getBracketSlots(tournament?.drawState?.finalsBracket, matches, 'CROSS');
+  const losersSlots = getBracketSlots(tournament?.drawState?.finalsBracket, matches, 'LOSERS');
+  const crossBracket = buildBracket(crossSlots, matches, 'CROSS');
+  const losersBracket = buildBracket(losersSlots, matches, 'LOSERS');
+
+  // The tournament is completed as soon as the final is decided
+  const hasChampion = !!crossBracket.resultId;
+  const status = tournament?.status;
   useEffect(() => {
-    if (!tournament || !isHydrated) return;
+    if (hasChampion && status === 'finals') {
+      updateStatus(id, 'completed').catch((error) => console.error('Failed to complete tournament:', error));
+    }
+  }, [hasChampion, status, id, updateStatus]);
 
-    const generateFinalsMatches = async () => {
-      // Check if we've already generated with these exact assignments
-      if (lastGeneratedRef.current === assignmentsHash) {
-        return; // Already generated with these assignments, skip
-      }
-
-      // Generate finals matches if not already done
-      const finalsMatches = tournament.matches.filter(
-        (m) => m.stage === 'CROSS' || m.stage === 'LOSERS'
-      );
-
-      // Only generate if no finals exist yet
-      if (finalsMatches.length === 0) {
-        try {
-          // Get standings for all pools
-          const allStandings: { [poolId: string]: any[] } = {};
-          tournament.pools.forEach((pool) => {
-            allStandings[pool.id] = getStandings(id, pool.id);
-          });
-
-          // Get manual finals assignments from drawState
-          const manualAssignments = tournament.drawState?.finalsAssignments || {};
-
-          // Select finalists (respects manual assignments if present)
-          const { crossFinalists, losersFinalists } = selectFinalists(
-            tournament.pools,
-            allStandings,
-            tournament.settings.advanceToCrossFinals,
-            tournament.settings.advanceToLosersFinal,
-            manualAssignments
-          );
-
-          // Generate brackets
-          const crossMatches = generateCrossFinalsMatches(crossFinalists);
-
-          // Only generate losers bracket if the setting is enabled (> 0)
-          const losersMatches = tournament.settings.advanceToLosersFinal > 0
-            ? generateLosersBracketMatches(losersFinalists)
-            : [];
-
-          // Save to store
-          const poolMatches = tournament.matches.filter((m) => m.stage === 'POOL');
-          const allMatches = [
-            ...poolMatches,
-            ...crossMatches,
-            ...losersMatches,
-          ];
-          await setMatches(id, allMatches);
-
-          // Update ref to prevent regenerating with same assignments
-          lastGeneratedRef.current = assignmentsHash;
-
-          console.log('Finals generated with assignments:', manualAssignments);
-        } catch (error) {
-          console.error('Failed to generate finals matches:', error);
-        }
-      }
-    };
-
-    generateFinalsMatches();
-  }, [id, assignmentsHash, getStandings, setMatches, isHydrated, resetTrigger]);
-
-  if (!isHydrated || isLoading) {
+  // Only block the page on the first load; reloads after a failed save must not
+  // unmount the brackets (typed scores would be lost)
+  if (!isHydrated || (isLoading && !tournament)) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -151,7 +120,7 @@ export default function FinalsPage({ params }: FinalsPageProps) {
     );
   }
 
-  if (error || !tournament) {
+  if (!tournament) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -207,83 +176,29 @@ export default function FinalsPage({ params }: FinalsPageProps) {
     }
   };
 
-  const handleSaveRound = async (roundIndex: number, stage: 'CROSS' | 'LOSERS') => {
+  const handleSaveRound = async (roundIndex: number, stage: FinalsStage) => {
     try {
       // Filter matches by BOTH roundIndex AND stage to avoid mixing Cross and Losers brackets
       const roundMatches = tournament.matches.filter(
         (m) => m.roundIndex === roundIndex && m.stage === stage
       );
 
-      if (roundMatches.length === 0) {
-        console.error('No matches found for this round');
-        return;
-      }
-
       // Validate all matches are confirmed
-      const allConfirmed = roundMatches.every((m) => m.confirmed);
-      if (!allConfirmed) {
+      if (roundMatches.length === 0 || !roundMatches.every((m) => m.confirmed)) {
         alert('Please confirm all matches in this round before saving');
         return;
       }
 
-      // Save the round to mark it as complete in database
-      await saveRound(id, roundIndex);
+      // Create the next round once all its players are known (byes advance
+      // automatically) and drop matches that no longer fit after an edited result
+      const slots = stage === 'CROSS' ? crossSlots : losersSlots;
+      const stageMatches = tournament.matches.filter((m) => m.stage === stage);
+      const synced = syncBracketMatches(slots, tournament.matches, stage);
+      const changed =
+        synced.length !== stageMatches.length || synced.some((m) => !stageMatches.includes(m));
 
-      console.log(`Round ${roundIndex} (${stage}) saved with ${roundMatches.length} matches`);
-
-      if (stage === 'CROSS') {
-        // Check if this was the Final match (only 1 match in the round)
-        if (roundMatches.length === 1) {
-          // Tournament is complete - we just saved the Final
-          console.log('🏆 Final round saved - Tournament complete!');
-          await updateStatus(id, 'completed');
-          return;
-        }
-
-        // Generate next round with winners
-        console.log(`Generating next round (${roundIndex + 1}) from ${roundMatches.length} matches`);
-
-        const nextRoundMatches = generateNextCrossRound(roundMatches, roundIndex + 1);
-
-        if (nextRoundMatches.length > 0) {
-          console.log(`✓ Generated ${nextRoundMatches.length} matches for round ${roundIndex + 1}`);
-
-          // Check if next round already exists to prevent duplicates
-          const existingNextRound = tournament.matches.filter(
-            (m) => m.stage === 'CROSS' && m.roundIndex === roundIndex + 1
-          );
-
-          if (existingNextRound.length === 0) {
-            // Add new round matches
-            const allMatches = [...tournament.matches, ...nextRoundMatches];
-            await setMatches(id, allMatches);
-            console.log(`✓ Added next round. Total matches: ${allMatches.length}`);
-          } else {
-            console.log('⚠ Next round already exists, skipping generation');
-          }
-        } else {
-          console.warn('⚠ No next round matches generated');
-        }
-      } else if (stage === 'LOSERS') {
-        // Losers bracket logic
-        if (roundMatches.length === 1) {
-          console.log('Losers bracket Final complete');
-          return;
-        }
-
-        // Generate next round with losers
-        const nextRoundMatches = generateNextLosersRound(roundMatches, roundIndex + 1);
-
-        if (nextRoundMatches.length > 0) {
-          const existingNextRound = tournament.matches.filter(
-            (m) => m.stage === 'LOSERS' && m.roundIndex === roundIndex + 1
-          );
-
-          if (existingNextRound.length === 0) {
-            await setMatches(id, [...tournament.matches, ...nextRoundMatches]);
-            console.log(`✓ Generated losers round ${roundIndex + 1}`);
-          }
-        }
+      if (changed) {
+        await setMatches(id, [...tournament.matches.filter((m) => m.stage !== stage), ...synced]);
       }
     } catch (error) {
       console.error('Failed to save round:', error);
@@ -291,93 +206,79 @@ export default function FinalsPage({ params }: FinalsPageProps) {
     }
   };
 
-  const handleMatchEdit = (matchId: string) => {
-    unconfirmMatch(id, matchId);
+  // (Re)generate both brackets from the current pool standings
+  const regenerateFinals = async () => {
+    const standings = Object.fromEntries(
+      tournament.pools.map((pool) => [pool.id, getStandings(id, pool.id)])
+    );
+    const { matches: finalsMatches, bracket } = generateFinals(
+      tournament.pools,
+      standings,
+      tournament.settings.advanceToCrossFinals,
+      tournament.settings.advanceToLosersFinal,
+      tournament.drawState?.finalsAssignments
+    );
+
+    const poolMatches = tournament.matches.filter((m) => m.stage === 'POOL');
+    await setMatches(id, [...poolMatches, ...finalsMatches]);
+    await updateDrawState(id, { ...(tournament.drawState ?? { status: 'complete' }), finalsBracket: bracket });
+    if (tournament.status !== 'finals') {
+      await updateStatus(id, 'finals');
+    }
   };
 
-  const handleArchive = () => {
-    archiveTournament(id);
+  const handleMatchEdit = async (matchId: string) => {
+    try {
+      await unconfirmMatch(id, matchId);
+      // Reopening a cross finals result means the champion isn't decided anymore
+      const match = tournament.matches.find((m) => m.id === matchId);
+      if (match?.stage === 'CROSS' && tournament.status === 'completed') {
+        await updateStatus(id, 'finals');
+      }
+    } catch (error) {
+      console.error('Failed to edit match:', error);
+    }
+  };
+
+  // Wait for the save so the tournament list shows the new state
+  const handleArchive = async () => {
     setArchiveModal(false);
-    router.push('/');
+    try {
+      await archiveTournament(id);
+      router.push('/');
+    } catch (error) {
+      alert(`Archiveren mislukt: ${errorMessage(error)}`);
+    }
   };
 
-  const handleDelete = () => {
-    deleteTournament(id);
+  const handleDelete = async () => {
     setDeleteModal(false);
-    router.push('/');
+    try {
+      await deleteTournament(id);
+      router.push('/');
+    } catch (error) {
+      alert(`Verwijderen mislukt: ${errorMessage(error)}`);
+    }
   };
 
   const handleReset = async () => {
-    // Remove all CROSS and LOSERS matches from DB
-    const poolMatches = tournament.matches.filter((m) => m.stage === 'POOL');
-    await setMatches(id, poolMatches);
-
-    // Reset tournament status to pool-play if it was completed
-    if (tournament.status === 'completed') {
-      await updateStatus(id, 'pool-play');
-    }
-
-    // Clear the ref and bump the trigger so the generation effect re-runs
-    lastGeneratedRef.current = '';
-    setResetTrigger(c => c + 1);
-
     setResetModal(false);
+    try {
+      await regenerateFinals();
+    } catch (error) {
+      console.error('Failed to reset finals:', error);
+      alert(`Reset finals mislukt: ${errorMessage(error)}`);
+    }
   };
 
-  // Find champion and loser
-  // Champion: Only from the Final round (a round with exactly 1 match in CROSS bracket)
-  const crossMatchesByRound: { [round: number]: Match[] } = {};
-  crossMatches.forEach((match) => {
-    if (!crossMatchesByRound[match.roundIndex]) {
-      crossMatchesByRound[match.roundIndex] = [];
-    }
-    crossMatchesByRound[match.roundIndex].push(match);
-  });
+  // Champion and loser are only known once the last round of their bracket is decided
+  const championId = crossBracket.resultId;
+  const loserId = losersBracket.resultId;
 
-  // Find the Final match (round with exactly 1 match that is confirmed)
-  // Important: A player is ONLY the champion if they win the very last match (where matchesInRound == 1)
-  let finalCrossMatch: Match | null = null;
-  let hasPendingRounds = false;
-
-  Object.entries(crossMatchesByRound).forEach(([roundIndex, roundMatches]) => {
-    // Check if this is the Final round (only 1 match)
-    if (roundMatches.length === 1) {
-      const match = roundMatches[0];
-      if (match.confirmed) {
-        // This is the Final and it's confirmed - we have a champion!
-        finalCrossMatch = match;
-      } else {
-        // Final exists but not confirmed yet
-        hasPendingRounds = true;
-      }
-    } else {
-      // Check if there are unconfirmed matches in non-final rounds
-      const hasUnconfirmed = roundMatches.some(m => !m.confirmed);
-      if (hasUnconfirmed) {
-        hasPendingRounds = true;
-      }
-    }
-  });
-
-  // Loser: From the final round of losers bracket
-  const losersMatchesByRound: { [round: number]: Match[] } = {};
-  losersMatches.forEach((match) => {
-    if (!losersMatchesByRound[match.roundIndex]) {
-      losersMatchesByRound[match.roundIndex] = [];
-    }
-    losersMatchesByRound[match.roundIndex].push(match);
-  });
-
-  let finalLosersMatch: Match | null = null;
-  Object.entries(losersMatchesByRound).forEach(([roundIndex, roundMatches]) => {
-    if (roundMatches.length === 1 && roundMatches[0].confirmed) {
-      finalLosersMatch = roundMatches[0];
-    }
-  });
-
-  // Only show champion if the Final match (1 match in round) has been confirmed
-  const championId = finalCrossMatch ? getMatchWinner(finalCrossMatch) : null;
-  const loserId = finalLosersMatch ? getMatchLoser(finalLosersMatch) : null;
+  const crossDisplay = bracketDisplay(crossBracket, crossMatches);
+  const losersDisplay = bracketDisplay(losersBracket, losersMatches);
+  const showLosersBracket = tournament.settings.advanceToLosersFinal > 0 || losersSlots.length > 0;
+  const hasFinals = crossMatches.length > 0 || losersMatches.length > 0;
 
   const championName = championId
     ? tournament.players.find((p) => p.id === championId)?.name || null
@@ -526,14 +427,27 @@ export default function FinalsPage({ params }: FinalsPageProps) {
           </div>
         )}
 
+        {/* No finals yet (e.g. opened before they were generated) */}
+        {!hasFinals && (
+          <div className="mb-6 p-6 bg-white border border-gray-200 rounded-lg text-center">
+            <p className="text-gray-700 mb-4">Er zijn nog geen finales gegenereerd.</p>
+            <Button variant="success" onClick={handleReset}>
+              Finales genereren
+            </Button>
+          </div>
+        )}
+
         {/* Brackets Container - Two Column Layout */}
         <div className="flex flex-col lg:flex-row gap-6">
           {/* Losers Bracket - Left Column (Only show if enabled) */}
-          {tournament.settings.advanceToLosersFinal > 0 && (
+          {showLosersBracket && (
             <div className="flex-1">
               <BracketView
                 title="Losers Bracket (Loser Advances)"
-                matches={losersMatches}
+                matches={losersDisplay.matches}
+                roundNames={losersDisplay.roundNames}
+                byes={losersDisplay.byes}
+                finalRoundIndex={losersDisplay.finalRoundIndex}
                 players={tournament.players}
                 isLosers={true}
                 tournamentId={id}
@@ -549,7 +463,10 @@ export default function FinalsPage({ params }: FinalsPageProps) {
           <div className="flex-1">
             <BracketView
               title="Cross Finals (Winner Advances)"
-              matches={crossMatches}
+              matches={crossDisplay.matches}
+              roundNames={crossDisplay.roundNames}
+              byes={crossDisplay.byes}
+              finalRoundIndex={crossDisplay.finalRoundIndex}
               players={tournament.players}
               isLosers={false}
               tournamentId={id}

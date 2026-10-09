@@ -13,6 +13,15 @@ export interface Player {
   class: PlayerClass;
 }
 
+// Round-1 slots of a finals bracket, top to bottom (null = bye)
+export type BracketSlots = (string | null)[];
+
+// Finals brackets; later rounds are derived from these slots and the results
+export interface FinalsBracket {
+  CROSS?: BracketSlots;
+  LOSERS?: BracketSlots;
+}
+
 // Draw State - tracks live loting progress for Draw Viewer
 export interface DrawState {
   status: 'idle' | 'picking' | 'assigned' | 'complete';
@@ -20,6 +29,9 @@ export interface DrawState {
   currentPickedPoolId?: string;
   currentPickedPoolName?: string;
   finalsAssignments?: { [playerId: string]: 'CROSS' | 'LOSERS' | 'ELIMINATED' | null };
+  finalsBracket?: FinalsBracket;
+  // Status to restore when an archived tournament is unarchived
+  statusBeforeArchive?: TournamentStatus;
 }
 
 // Tournament Settings

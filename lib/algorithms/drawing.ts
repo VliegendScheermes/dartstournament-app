@@ -5,6 +5,14 @@
 
 import { Player, Pool } from '@/types/tournament';
 
+export const POOL_LETTERS = 'ABCDEFGH';
+
+// One draw step: which player went to which pool, in draw order
+export interface DrawStep {
+  player: Player;
+  poolIndex: number;
+}
+
 // Shuffle array using Fisher-Yates algorithm
 function shuffleArray<T>(array: T[]): T[] {
   const shuffled = [...array];
@@ -16,13 +24,9 @@ function shuffleArray<T>(array: T[]): T[] {
 }
 
 // Create pots based on player classes
-function createPots(players: Player[], useClasses: boolean) {
+function createPots(players: Player[], useClasses: boolean): Player[][] {
   if (!useClasses) {
-    return {
-      potA: shuffleArray(players),
-      potB: [],
-      potC: [],
-    };
+    return [shuffleArray(players)];
   }
 
   const potA = shuffleArray(players.filter((p) => p.class === 'A'));
@@ -30,129 +34,56 @@ function createPots(players: Player[], useClasses: boolean) {
   const potC = shuffleArray(players.filter((p) => p.class === 'C'));
   const noClass = shuffleArray(players.filter((p) => p.class === null));
 
-  // Add players without class to pot C
-  return {
-    potA,
-    potB,
-    potC: [...potC, ...noClass],
-  };
+  // Players without class are drawn together with pot C
+  return [potA, potB, [...potC, ...noClass]];
 }
 
-// Distribute players into pools using snake draft
-export function distributePlayers(
+export function createEmptyPools(numPools: number): Pool[] {
+  return Array.from({ length: numPools }, (_, i) => ({
+    id: crypto.randomUUID(),
+    name: `Poule ${POOL_LETTERS[i]}`,
+    playerIds: [],
+    boardNumber: null,
+  }));
+}
+
+/**
+ * Draw players into pools.
+ *
+ * Pots are drawn in order (A, B, C). Every drawn player goes to one of the pools
+ * with the fewest players, preferring pools with the fewest players from the same
+ * pot; remaining ties are broken randomly. Pool sizes therefore never differ by
+ * more than one, each class is spread evenly, and which pools get an extra
+ * player of a class is random.
+ */
+export function drawPools(
   players: Player[],
   numPools: number,
   useClasses: boolean
-): Pool[] {
-  if (players.length === 0) {
-    return [];
-  }
+): { pools: Pool[]; steps: DrawStep[] } {
+  const pools = createEmptyPools(numPools);
+  const steps: DrawStep[] = [];
 
-  // Create pots
-  const { potA, potB, potC } = createPots(players, useClasses);
+  for (const pot of createPots(players, useClasses)) {
+    const fromPot = new Array(numPools).fill(0);
 
-  // Initialize pools
-  const pools: Pool[] = [];
-  const poolLetters = 'ABCDEFGH';
-  for (let i = 0; i < numPools; i++) {
-    pools.push({
-      id: crypto.randomUUID(),
-      name: `Poule ${poolLetters[i]}`,
-      playerIds: [],
-      boardNumber: null,
-    });
-  }
+    for (const player of pot) {
+      const minSize = Math.min(...pools.map((pool) => pool.playerIds.length));
+      const smallest = pools.map((_, i) => i).filter((i) => pools[i].playerIds.length === minSize);
+      const minFromPot = Math.min(...smallest.map((i) => fromPot[i]));
+      const candidates = smallest.filter((i) => fromPot[i] === minFromPot);
+      const poolIndex = candidates[Math.floor(Math.random() * candidates.length)];
 
-  // Distribute using snake draft (round-robin with direction change)
-  let currentPool = 0;
-  let direction = 1; // 1 = forward, -1 = backward
-
-  const allPlayers = [...potA, ...potB, ...potC];
-
-  for (const player of allPlayers) {
-    pools[currentPool].playerIds.push(player.id);
-
-    // Move to next pool
-    if (direction === 1) {
-      if (currentPool === numPools - 1) {
-        direction = -1;
-      } else {
-        currentPool++;
-      }
-    } else {
-      if (currentPool === 0) {
-        direction = 1;
-      } else {
-        currentPool--;
-      }
+      pools[poolIndex].playerIds.push(player.id);
+      fromPot[poolIndex]++;
+      steps.push({ player, poolIndex });
     }
   }
 
-  return pools;
+  return { pools, steps };
 }
 
-// Live drawing with delay (returns a promise that resolves step by step)
-export async function liveDistributePlayers(
-  players: Player[],
-  numPools: number,
-  useClasses: boolean,
-  delaySeconds: number,
-  onStep: (player: Player, poolIndex: number, poolName: string) => void
-): Promise<Pool[]> {
-  if (players.length === 0) {
-    return [];
-  }
-
-  // Create pots
-  const { potA, potB, potC } = createPots(players, useClasses);
-
-  // Initialize pools
-  const pools: Pool[] = [];
-  const poolLetters = 'ABCDEFGH';
-  for (let i = 0; i < numPools; i++) {
-    pools.push({
-      id: crypto.randomUUID(),
-      name: `Poule ${poolLetters[i]}`,
-      playerIds: [],
-      boardNumber: null,
-    });
-  }
-
-  // Distribute using snake draft with delays
-  let currentPool = 0;
-  let direction = 1;
-
-  const allPlayers = [...potA, ...potB, ...potC];
-
-  for (let i = 0; i < allPlayers.length; i++) {
-    const player = allPlayers[i];
-
-    // Add player to pool
-    pools[currentPool].playerIds.push(player.id);
-
-    // Call the step callback
-    onStep(player, currentPool, pools[currentPool].name);
-
-    // Wait before next step (except for the last player)
-    if (i < allPlayers.length - 1) {
-      await new Promise((resolve) => setTimeout(resolve, delaySeconds * 1000));
-    }
-
-    // Move to next pool
-    if (direction === 1) {
-      if (currentPool === numPools - 1) {
-        direction = -1;
-      } else {
-        currentPool++;
-      }
-    } else {
-      if (currentPool === 0) {
-        direction = 1;
-      } else {
-        currentPool--;
-      }
-    }
-  }
-
-  return pools;
+// Distribute players into pools (fast draw)
+export function distributePlayers(players: Player[], numPools: number, useClasses: boolean): Pool[] {
+  return drawPools(players, numPools, useClasses).pools;
 }

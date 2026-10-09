@@ -6,6 +6,7 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 import { apiClient } from '@/lib/api/client';
+import { buildBracket, getBracketSlots } from '@/lib/algorithms/finals';
 import {
   Tournament,
   TournamentSettings,
@@ -57,6 +58,7 @@ interface TournamentStore {
   updateTournament: (id: string, updates: Partial<Tournament>) => Promise<void>;
   deleteTournament: (id: string) => Promise<void>;
   archiveTournament: (id: string) => Promise<void>;
+  unarchiveTournament: (id: string) => Promise<void>;
   setCurrentTournament: (id: string | null) => void;
 
   // Settings Actions
@@ -99,6 +101,16 @@ interface TournamentStore {
   getActiveTournaments: () => Tournament[];
   getArchivedTournaments: () => Tournament[];
   getStandings: (tournamentId: string, poolId?: string) => StandingsRow[];
+}
+
+// Phase of a tournament judged by its matches (for tournaments archived without a remembered status)
+function inferStatus(tournament: Tournament): Tournament['status'] {
+  const hasFinals = tournament.matches.some((m) => m.stage !== 'POOL');
+  if (hasFinals) {
+    const slots = getBracketSlots(tournament.drawState?.finalsBracket, tournament.matches, 'CROSS');
+    return buildBracket(slots, tournament.matches, 'CROSS').resultId ? 'completed' : 'finals';
+  }
+  return tournament.matches.length > 0 ? 'pool-play' : 'setup';
 }
 
 // Helper function to convert API tournament to store tournament
@@ -170,10 +182,14 @@ export const useTournamentStore = create<TournamentStore>()((set, get) => ({
   // Used by viewer pages accessible to anyone (live-viewer, split-view, OBS sources)
   loadTournamentPublic: async (id: string) => {
     try {
-      const response = await fetch(`/api/tournaments/${id}/public`);
+      const response = await fetch(`/api/tournaments/${id}/public`, { cache: 'no-store' });
       if (!response.ok) {
         if (response.status === 404) {
-          set({ error: 'Tournament not found' });
+          // Deleted tournament: drop it so viewers stop showing stale data
+          set((state) => ({
+            tournaments: state.tournaments.filter((t) => t.id !== id),
+            error: 'Tournament not found',
+          }));
           return;
         }
         throw new Error(`API error: ${response.statusText}`);
@@ -185,6 +201,7 @@ export const useTournamentStore = create<TournamentStore>()((set, get) => ({
         tournaments: state.tournaments.some(t => t.id === id)
           ? state.tournaments.map((t) => (t.id === id ? tournament : t))
           : [...state.tournaments, tournament],
+        error: null,
       }));
     } catch (error: any) {
       set({ error: error.message });
@@ -274,7 +291,8 @@ export const useTournamentStore = create<TournamentStore>()((set, get) => ({
               advanceToLosersFinal: updates.settings.advanceToLosersFinal,
               useClasses: updates.settings.useClasses,
               liveDrawDelaySeconds: updates.settings.liveDrawDelaySeconds,
-              youtubeStreamUrl: updates.settings.youtubeStreamUrl,
+              // null (not undefined) so clearing the URL reaches the server
+              youtubeStreamUrl: updates.settings.youtubeStreamUrl || null,
             });
           }
           if (updates.status) apiUpdates.status = updates.status;
@@ -306,9 +324,29 @@ export const useTournamentStore = create<TournamentStore>()((set, get) => ({
         }
       },
 
-      // Archive tournament
+      // Archive tournament, remembering its phase so unarchiving can restore it
       archiveTournament: async (id) => {
-        await get().updateStatus(id, 'archived');
+        const tournament = get().getTournament(id);
+        if (!tournament || tournament.status === 'archived') return;
+        await get().updateTournament(id, {
+          status: 'archived',
+          drawState: { ...(tournament.drawState ?? { status: 'idle' }), statusBeforeArchive: tournament.status },
+        });
+      },
+
+      // Unarchive tournament back to the phase it was archived in
+      unarchiveTournament: async (id) => {
+        let tournament = get().getTournament(id);
+        if (!tournament) return;
+        let status = tournament.drawState?.statusBeforeArchive;
+        if (!status) {
+          // Archived before the phase was remembered: derive it from the full tournament
+          await get().loadTournament(id);
+          tournament = get().getTournament(id);
+          if (!tournament) return;
+          status = inferStatus(tournament);
+        }
+        await get().updateStatus(id, status);
       },
 
       // Set current tournament
@@ -583,36 +621,18 @@ export const useTournamentStore = create<TournamentStore>()((set, get) => ({
           return false;
         }
 
-        // Optimistically confirm all matches in round
-        set((state) => ({
-          tournaments: state.tournaments.map((t) =>
-            t.id === tournamentId
-              ? {
-                  ...t,
-                  matches: t.matches.map((m) =>
-                    m.roundIndex === roundIndex && m.stage === 'POOL'
-                      ? { ...m, confirmed: true }
-                      : m
-                  ),
-                  rounds: t.rounds.map((r) =>
-                    r.index === roundIndex ? { ...r, savedAll: true } : r
-                  ),
-                  updatedAt: new Date().toISOString(),
-                }
-              : t
-          ),
-        }));
+        // Confirm match by match: replacing all matches at once would race with
+        // the per-match saves that are still in flight
+        await Promise.all(
+          roundMatches
+            .filter((m) => !m.confirmed)
+            .map((m) => get().confirmMatch(tournamentId, m.id))
+        );
 
-        try {
-          const updatedTournament = get().getTournament(tournamentId);
-          if (updatedTournament) {
-            await apiClient.put(`/tournaments/${tournamentId}/matches`, { matches: updatedTournament.matches });
-            await apiClient.put(`/tournaments/${tournamentId}/rounds`, { rounds: updatedTournament.rounds });
-          }
-        } catch (error: any) {
-          await get().loadTournament(tournamentId);
-          throw error;
-        }
+        await get().setRounds(
+          tournamentId,
+          tournament.rounds.map((r) => (r.index === roundIndex ? { ...r, savedAll: true } : r))
+        );
 
         return true;
       },
@@ -633,7 +653,8 @@ export const useTournamentStore = create<TournamentStore>()((set, get) => ({
         if (!tournament) return;
 
         const drawState: DrawState = tournament.drawState || { status: 'idle' };
-        const finalsAssignments = drawState.finalsAssignments || {};
+        // Copy so the current store state isn't mutated before the update goes through
+        const finalsAssignments = { ...(drawState.finalsAssignments || {}) };
 
         if (assignment === null) {
           delete finalsAssignments[playerId];
@@ -661,7 +682,8 @@ export const useTournamentStore = create<TournamentStore>()((set, get) => ({
         const tournament = get().getTournament(tournamentId);
         if (!tournament) return;
 
-        const drawState: DrawState = tournament.drawState || { status: 'idle' };
+        // Copy so the current store state isn't mutated before the update goes through
+        const drawState: DrawState = { ...(tournament.drawState || { status: 'idle' }) };
         delete drawState.finalsAssignments;
 
         await get().updateDrawState(tournamentId, drawState);

@@ -112,23 +112,39 @@ export async function PUT(
     }
 
     const body = await request.json()
-    const players = body.players || []
+    const players: { id?: string; name: string; class?: string | null }[] = body.players || []
 
-    // Delete all existing players and recreate
-    await prisma.player.deleteMany({
-      where: { tournamentId: id }
+    // Update players in place. Deleting and recreating them would cascade-delete
+    // their pool assignments and every match they play in.
+    await prisma.$transaction(async (tx) => {
+      const keepIds = players.map((player) => player.id).filter((playerId): playerId is string => !!playerId)
+
+      // Only players that were removed from the list are deleted
+      await tx.player.deleteMany({
+        where: { tournamentId: id, id: { notIn: keepIds } }
+      })
+
+      const existing = await tx.player.findMany({ where: { tournamentId: id } })
+      const existingById = new Map(existing.map((player) => [player.id, player]))
+
+      const toCreate = []
+      for (const player of players) {
+        const data = { name: player.name, class: player.class || null }
+        const current = player.id ? existingById.get(player.id) : undefined
+
+        if (!current) {
+          toCreate.push({ ...(player.id && { id: player.id }), tournamentId: id, ...data })
+        } else if (current.name !== data.name || current.class !== data.class) {
+          await tx.player.update({ where: { id: current.id }, data })
+        }
+      }
+
+      if (toCreate.length > 0) {
+        await tx.player.createMany({ data: toCreate })
+      }
     })
 
-    const created = await prisma.player.createMany({
-      data: players.map((player: any) => ({
-        id: player.id,
-        tournamentId: id,
-        name: player.name,
-        class: player.class || null
-      }))
-    })
-
-    return NextResponse.json({ count: created.count })
+    return NextResponse.json({ count: players.length })
   } catch (error) {
     console.error('Error updating players:', error)
     return NextResponse.json(

@@ -8,10 +8,11 @@
 import React, { use } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTournamentStore } from '@/lib/store/tournamentStore';
+import { errorMessage } from '@/lib/errorMessage';
 import { SettingsForm } from '@/components/tournament/SettingsForm';
 import { PlayerManager } from '@/components/tournament/PlayerManager';
 import { PoolDisplay } from '@/components/tournament/PoolDisplay';
-import { TournamentSettings, Player, Pool } from '@/types/tournament';
+import { TournamentSettings, Player } from '@/types/tournament';
 import { generateAllPoolSchedules } from '@/lib/algorithms/roundRobin';
 
 interface SetupPageProps {
@@ -28,7 +29,6 @@ export default function SetupPage({ params }: SetupPageProps) {
     loadTournament,
     updateSettings,
     setPlayers,
-    setPools,
     setMatches,
     setRounds,
     updateStatus,
@@ -62,7 +62,9 @@ export default function SetupPage({ params }: SetupPageProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showSettingsDropdown]);
 
-  if (!isHydrated || isLoading) {
+  // Only block the page on the first load; reloads after a failed save must not
+  // unmount the forms (unsaved input) or a running live draw
+  if (!isHydrated || (isLoading && !tournament)) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -73,7 +75,7 @@ export default function SetupPage({ params }: SetupPageProps) {
     );
   }
 
-  if (error || !tournament) {
+  if (!tournament) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -97,6 +99,7 @@ export default function SetupPage({ params }: SetupPageProps) {
       await updateSettings(id, settings);
     } catch (error) {
       console.error('Failed to save settings:', error);
+      alert(`Instellingen opslaan mislukt: ${errorMessage(error)}`);
     }
   };
 
@@ -105,14 +108,7 @@ export default function SetupPage({ params }: SetupPageProps) {
       await setPlayers(id, players);
     } catch (error) {
       console.error('Failed to save players:', error);
-    }
-  };
-
-  const handlePoolsUpdate = async (pools: Pool[]) => {
-    try {
-      await setPools(id, pools);
-    } catch (error) {
-      console.error('Failed to update pools:', error);
+      alert(`Spelers opslaan mislukt: ${errorMessage(error)}`);
     }
   };
 
@@ -135,6 +131,7 @@ export default function SetupPage({ params }: SetupPageProps) {
       router.push(`/tournament/${id}/pool-play`);
     } catch (error) {
       console.error('Failed to start tournament:', error);
+      alert(`Toernooi starten mislukt: ${errorMessage(error)}`);
     }
   };
 
@@ -282,8 +279,8 @@ export default function SetupPage({ params }: SetupPageProps) {
           pools={tournament.pools}
           players={tournament.players}
           settings={tournament.settings}
+          status={tournament.status}
           tournamentId={id}
-          onPoolsUpdate={handlePoolsUpdate}
           onStartTournament={handleStartTournament}
         />
       </div>

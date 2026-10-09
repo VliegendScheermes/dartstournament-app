@@ -116,6 +116,11 @@ export async function PUT(
 
     // Use transaction to update rounds
     await prisma.$transaction(async (tx) => {
+      // Rounds that are no longer in the list (e.g. after a new draw) are removed
+      await tx.round.deleteMany({
+        where: { tournamentId: id, index: { notIn: rounds.map((round: { index: number }) => round.index) } }
+      })
+
       for (const round of rounds) {
         await tx.round.upsert({
           where: {

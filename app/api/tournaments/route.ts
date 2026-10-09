@@ -18,6 +18,8 @@ export async function GET(request: NextRequest) {
         ...(status && { status })
       },
       include: {
+        // Players are few and needed for the player count on the cards
+        players: { orderBy: { name: 'asc' } },
         _count: {
           select: {
             players: true,
@@ -55,12 +57,12 @@ export async function POST(request: NextRequest) {
       data: {
         userId: auth.userId,
         tournamentName: body.tournamentName || 'New Tournament',
-        numPools: body.numPools || 4,
-        numBoards: body.numBoards || 4,
-        advanceToCrossFinals: body.advanceToCrossFinals || 2,
-        advanceToLosersFinal: body.advanceToLosersFinal || 2,
-        useClasses: body.useClasses || false,
-        liveDrawDelaySeconds: body.liveDrawDelaySeconds || 3,
+        numPools: body.numPools ?? 4,
+        numBoards: body.numBoards ?? 4,
+        advanceToCrossFinals: body.advanceToCrossFinals ?? 2,
+        advanceToLosersFinal: body.advanceToLosersFinal ?? 2,
+        useClasses: body.useClasses ?? false,
+        liveDrawDelaySeconds: body.liveDrawDelaySeconds ?? 3,
         youtubeStreamUrl: body.youtubeStreamUrl || null,
         status: body.status || 'setup',
         drawState: body.drawState || null

@@ -5,163 +5,181 @@
 
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
-import { Pool, Player, TournamentSettings } from '@/types/tournament';
-import { distributePlayers, liveDistributePlayers } from '@/lib/algorithms/drawing';
+import { Pool, Player, TournamentSettings, TournamentStatus } from '@/types/tournament';
+import { drawPools, POOL_LETTERS } from '@/lib/algorithms/drawing';
+import { validateDraw, validateStart } from '@/lib/algorithms/validation';
 import { useTournamentStore } from '@/lib/store/tournamentStore';
+import { errorMessage } from '@/lib/errorMessage';
+
+// How long a live pick is shown before the player is placed in the pool.
+// The draw viewer polls every 500 ms, so this must be well above that.
+const REVEAL_MS = 2500;
+
+type PendingAction = 'live' | 'fast' | 'reset';
 
 interface PoolDisplayProps {
   pools: Pool[];
   players: Player[];
   settings: TournamentSettings;
+  status: TournamentStatus;
   tournamentId: string;
-  onPoolsUpdate: (pools: Pool[]) => void;
   onStartTournament: () => void;
 }
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const PoolDisplay: React.FC<PoolDisplayProps> = ({
   pools,
   players,
   settings,
+  status,
   tournamentId,
-  onPoolsUpdate,
   onStartTournament,
 }) => {
   const router = useRouter();
-  const { updateDrawState, setMatches, setRounds, updateStatus } = useTournamentStore();
+  const { setPools, updateDrawState, setMatches, setRounds, updateStatus } = useTournamentStore();
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentDrawing, setCurrentDrawing] = useState<{
     player: Player;
+    poolId: string;
     poolName: string;
-    poolIndex: number;
   } | null>(null);
-  const [shuffleModal, setShuffleModal] = useState(false);
-  const [resetPoolsModal, setResetPoolsModal] = useState(false);
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [showAnimation, setShowAnimation] = useState(false);
 
-  const handleFastLoting = () => {
-    if (players.length === 0) {
-      alert('Please add players first');
-      return;
-    }
+  // Stops a running live draw when the page is left
+  const cancelledRef = useRef(false);
+  useEffect(() => {
+    cancelledRef.current = false;
+    return () => {
+      cancelledRef.current = true;
+    };
+  }, []);
 
-    const newPools = distributePlayers(players, settings.numPools, settings.useClasses);
-    onPoolsUpdate(newPools);
-    // Clear any previously generated matches/rounds — pool assignments changed
-    setMatches(tournamentId, []);
-    setRounds(tournamentId, []);
-    updateStatus(tournamentId, 'setup');
-    updateDrawState(tournamentId, { status: 'complete' });
+  const tournamentStarted = status !== 'setup';
+  const hasPoolsBeenDrawn = pools.length > 0 && pools.some((p) => p.playerIds.length > 0);
+
+  // Matches, rounds and finals belong to the old pools; clear them before a new draw
+  const clearSchedule = async () => {
+    await setMatches(tournamentId, []);
+    await setRounds(tournamentId, []);
+    if (status !== 'setup') await updateStatus(tournamentId, 'setup');
+  };
+
+  const handleFastLoting = async () => {
+    const { pools: newPools } = drawPools(players, settings.numPools, settings.useClasses);
+    try {
+      await clearSchedule();
+      await setPools(tournamentId, newPools);
+      await updateDrawState(tournamentId, { status: 'complete' });
+    } catch (error) {
+      alert(`Loting mislukt: ${errorMessage(error)}`);
+    }
   };
 
   const handleLiveLoting = async () => {
-    if (players.length === 0) {
-      alert('Please add players first');
-      return;
-    }
+    const { pools: drawnPools, steps } = drawPools(players, settings.numPools, settings.useClasses);
+    const delayMs = Math.max(0, settings.liveDrawDelaySeconds * 1000);
+    const revealMs = Math.min(REVEAL_MS, delayMs);
+    let currentPools = drawnPools.map((pool) => ({ ...pool, playerIds: [] as string[] }));
 
+    cancelledRef.current = false;
     setIsDrawing(true);
     setCurrentDrawing(null);
-    // Clear any previously generated matches/rounds — pool assignments about to change
-    setMatches(tournamentId, []);
-    setRounds(tournamentId, []);
-    updateStatus(tournamentId, 'setup');
-    updateDrawState(tournamentId, { status: 'idle' });
-
-    // Initialize pools structure and track it during drawing
-    const initialPools = Array.from({ length: settings.numPools }, (_, i) => ({
-      id: crypto.randomUUID(),
-      name: `Poule ${'ABCDEFGH'[i]}`,
-      playerIds: [] as string[],
-      boardNumber: null,
-    }));
-
-    let currentPools = initialPools;
 
     try {
-      const newPools = await liveDistributePlayers(
-        players,
-        settings.numPools,
-        settings.useClasses,
-        settings.liveDrawDelaySeconds,
-        (player, poolIndex, poolName) => {
-          setShowAnimation(true);
-          setCurrentDrawing({ player, poolName, poolIndex });
+      // Start from empty pools so the old draw disappears from all screens
+      await clearSchedule();
+      await setPools(tournamentId, currentPools);
+      await updateDrawState(tournamentId, { status: 'idle' });
 
-          // Signal "picking" to draw viewer
-          updateDrawState(tournamentId, {
-            status: 'picking',
-            currentPickedPlayerId: player.id,
-            currentPickedPoolId: initialPools[poolIndex].id,
-            currentPickedPoolName: initialPools[poolIndex].name,
-          });
+      // Each step runs to completion before the next one starts, so the saved
+      // pools and the draw viewer always follow the draw order
+      for (let i = 0; i < steps.length; i++) {
+        if (cancelledRef.current) return;
+        const { player, poolIndex } = steps[i];
+        const pool = currentPools[poolIndex];
+        const pick = {
+          currentPickedPlayerId: player.id,
+          currentPickedPoolId: pool.id,
+          currentPickedPoolName: pool.name,
+        };
 
-          // Hold "picking" for 2500ms so draw viewer (polling at 500ms) reliably catches it
-          setTimeout(() => {
-            // Add player to the accumulating pools
-            const updatedPools = currentPools.map((pool, idx) => {
-              if (idx === poolIndex) {
-                return {
-                  ...pool,
-                  playerIds: [...pool.playerIds, player.id],
-                };
-              }
-              return pool;
-            });
+        setCurrentDrawing({ player, poolId: pool.id, poolName: pool.name });
+        setShowAnimation(true);
+        await updateDrawState(tournamentId, { status: 'picking', ...pick });
+        await wait(revealMs);
+        if (cancelledRef.current) return;
 
-            currentPools = updatedPools; // Update the reference
-            onPoolsUpdate(updatedPools);
+        setShowAnimation(false);
+        currentPools = currentPools.map((p, idx) =>
+          idx === poolIndex ? { ...p, playerIds: [...p.playerIds, player.id] } : p
+        );
+        await setPools(tournamentId, currentPools);
+        await updateDrawState(tournamentId, { status: 'assigned', ...pick });
 
-            // Signal "assigned" to draw viewer
-            updateDrawState(tournamentId, {
-              status: 'assigned',
-              currentPickedPlayerId: player.id,
-              currentPickedPoolId: initialPools[poolIndex].id,
-              currentPickedPoolName: initialPools[poolIndex].name,
-            });
-          }, 2500);
+        if (i < steps.length - 1) await wait(delayMs - revealMs);
+      }
 
-          // Hide big animation after a moment
-          setTimeout(() => {
-            setShowAnimation(false);
-          }, 2000);
-        }
-      );
-
-      // Final update (already done step by step)
-      setCurrentDrawing(null);
-      updateDrawState(tournamentId, { status: 'complete' });
+      if (cancelledRef.current) return;
+      await updateDrawState(tournamentId, { status: 'complete' });
+    } catch (error) {
+      if (!cancelledRef.current) alert(`Loting mislukt: ${errorMessage(error)}`);
     } finally {
-      setIsDrawing(false);
+      if (!cancelledRef.current) {
+        setIsDrawing(false);
+        setCurrentDrawing(null);
+        setShowAnimation(false);
+      }
     }
   };
 
-  const handleShuffle = () => {
-    handleFastLoting();
-    setShuffleModal(false);
+  const handleResetPools = async () => {
+    try {
+      await clearSchedule();
+      await setPools(tournamentId, []);
+      await updateDrawState(tournamentId, { status: 'idle' });
+    } catch (error) {
+      alert(`Reset mislukt: ${errorMessage(error)}`);
+    }
   };
 
-  const handleResetPools = () => {
-    onPoolsUpdate([]);
-    setMatches(tournamentId, []);
-    setRounds(tournamentId, []);
-    updateStatus(tournamentId, 'setup');
-    updateDrawState(tournamentId, { status: 'idle' });
-    setResetPoolsModal(false);
+  const runAction = (action: PendingAction) => {
+    if (action === 'live') handleLiveLoting();
+    else if (action === 'fast') handleFastLoting();
+    else handleResetPools();
+  };
+
+  // Ask for confirmation whenever an action replaces an existing draw or results
+  const requestAction = (action: PendingAction) => {
+    if (action !== 'reset') {
+      const errors = validateDraw(players, settings);
+      if (errors.length > 0) {
+        alert(errors.join('\n\n'));
+        return;
+      }
+    }
+    if (action === 'reset' || hasPoolsBeenDrawn || tournamentStarted) {
+      setPendingAction(action);
+    } else {
+      runAction(action);
+    }
+  };
+
+  const confirmPendingAction = () => {
+    if (pendingAction) runAction(pendingAction);
+    setPendingAction(null);
   };
 
   const handleStartTournament = () => {
-    if (pools.length === 0 || pools.some((p) => p.playerIds.length === 0)) {
-      alert('Please perform loting first');
-      return;
-    }
-
-    if (players.length < 4) {
-      alert('Minimum 4 players required to start tournament');
+    const errors = validateStart(players, pools, settings);
+    if (errors.length > 0) {
+      alert(errors.join('\n\n'));
       return;
     }
 
@@ -172,7 +190,18 @@ export const PoolDisplay: React.FC<PoolDisplayProps> = ({
     return players.find((p) => p.id === playerId)?.name || 'Unknown';
   };
 
-  const hasPoolsBeenDrawn = pools.length > 0 && pools.some((p) => p.playerIds.length > 0);
+  // Show the drawn pools by name; before a draw show empty placeholders
+  const displayedPools: Pool[] = hasPoolsBeenDrawn || isDrawing
+    ? [...pools].sort((a, b) => a.name.localeCompare(b.name))
+    : Array.from({ length: settings.numPools }, (_, i) => ({
+        id: `placeholder-${i}`,
+        name: `Poule ${POOL_LETTERS[i]}`,
+        playerIds: [],
+      }));
+
+  const assignedIds = new Set(pools.flatMap((pool) => pool.playerIds));
+  const unassignedPlayers = players.filter((player) => !assignedIds.has(player.id));
+  const poolCountChanged = hasPoolsBeenDrawn && pools.length !== settings.numPools;
 
   return (
     <div className="space-y-6">
@@ -182,44 +211,77 @@ export const PoolDisplay: React.FC<PoolDisplayProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <Button
               variant="primary"
-              onClick={handleLiveLoting}
+              onClick={() => requestAction('live')}
               disabled={isDrawing || players.length === 0}
             >
               {isDrawing ? 'Drawing...' : 'Live Loting'}
             </Button>
             <Button
               variant="secondary"
-              onClick={handleFastLoting}
+              onClick={() => requestAction('fast')}
               disabled={isDrawing || players.length === 0}
             >
               Fast Loting
             </Button>
             <Button
               variant="secondary"
-              onClick={() => setShuffleModal(true)}
+              onClick={() => requestAction('fast')}
               disabled={isDrawing || !hasPoolsBeenDrawn}
             >
               Shuffle
             </Button>
             <Button
               variant="danger"
-              onClick={() => setResetPoolsModal(true)}
+              onClick={() => requestAction('reset')}
               disabled={isDrawing || !hasPoolsBeenDrawn}
             >
               Reset Poules
             </Button>
           </div>
 
-          <Button
-            variant="success"
-            onClick={handleStartTournament}
-            disabled={isDrawing || !hasPoolsBeenDrawn}
-            className="w-full text-lg py-3"
-          >
-            Start Tournament
-          </Button>
+          {tournamentStarted ? (
+            <Button
+              variant="success"
+              onClick={() =>
+                router.push(`/tournament/${tournamentId}/${status === 'pool-play' ? 'pool-play' : 'finals'}`)
+              }
+              disabled={isDrawing}
+              className="w-full text-lg py-3"
+            >
+              Toernooi is gestart — ga naar {status === 'pool-play' ? 'de poulefase' : 'de finales'} →
+            </Button>
+          ) : (
+            <Button
+              variant="success"
+              onClick={handleStartTournament}
+              disabled={isDrawing || !hasPoolsBeenDrawn}
+              className="w-full text-lg py-3"
+            >
+              Start Tournament
+            </Button>
+          )}
         </div>
       </Card>
+
+      {/* Warnings about a draw that no longer matches the players or settings */}
+      {!isDrawing && hasPoolsBeenDrawn && (unassignedPlayers.length > 0 || poolCountChanged) && (
+        <Card className="bg-yellow-50 border border-yellow-300">
+          <div className="text-sm text-yellow-900 space-y-1">
+            {unassignedPlayers.length > 0 && (
+              <p>
+                ⚠️ {unassignedPlayers.map((p) => p.name).join(', ')}{' '}
+                {unassignedPlayers.length === 1 ? 'zit' : 'zitten'} nog niet in een poule. Loot opnieuw om{' '}
+                {unassignedPlayers.length === 1 ? 'deze speler' : 'deze spelers'} mee te nemen.
+              </p>
+            )}
+            {poolCountChanged && (
+              <p>
+                ⚠️ Er zijn {pools.length} poules geloot, maar de instellingen zeggen {settings.numPools}. Loot opnieuw.
+              </p>
+            )}
+          </div>
+        </Card>
+      )}
 
       {/* Live Drawing Animation */}
       {isDrawing && currentDrawing && showAnimation && (
@@ -256,26 +318,22 @@ export const PoolDisplay: React.FC<PoolDisplayProps> = ({
 
       {/* Pools Display - ONDERAAN */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {Array.from({ length: settings.numPools }).map((_, index) => {
-          const poolLetter = 'ABCDEFGH'[index];
-          const pool = pools[index] ?? null;
-          const isCurrentPool = currentDrawing && currentDrawing.poolIndex === index;
+        {displayedPools.map((pool) => {
+          const isCurrentPool = currentDrawing?.poolId === pool.id;
 
           return (
             <Card
-              key={poolLetter}
-              title={`Poule ${poolLetter}`}
+              key={pool.id}
+              title={pool.name}
               className={`transition-all duration-500 ${
                 isCurrentPool && isDrawing ? 'ring-4 ring-blue-500 shadow-xl scale-105' : ''
               }`}
             >
               <div className="space-y-2">
-                {pool && pool.playerIds.length > 0 ? (
+                {pool.playerIds.length > 0 ? (
                   pool.playerIds.map((playerId, pIndex) => {
                     const isNewPlayer =
-                      currentDrawing &&
-                      pool.playerIds[pool.playerIds.length - 1] === playerId &&
-                      isCurrentPool;
+                      isCurrentPool && pool.playerIds[pool.playerIds.length - 1] === playerId;
 
                     return (
                       <div
@@ -300,38 +358,27 @@ export const PoolDisplay: React.FC<PoolDisplayProps> = ({
         })}
       </div>
 
-      {/* Shuffle Confirmation Modal */}
+      {/* Confirmation for actions that replace the draw */}
       <Modal
-        isOpen={shuffleModal}
-        onClose={() => setShuffleModal(false)}
-        onConfirm={handleShuffle}
-        title="Shuffle Pools"
-        confirmText="Shuffle"
-        confirmVariant="primary"
-      >
-        <p>Are you sure you want to redraw all pools?</p>
-        <p className="text-sm text-gray-500 mt-2">
-          This will randomly redistribute all players.
-        </p>
-      </Modal>
-
-      {/* Reset Pools Modal */}
-      <Modal
-        isOpen={resetPoolsModal}
-        onClose={() => setResetPoolsModal(false)}
-        onConfirm={handleResetPools}
-        title="Reset Poules"
-        confirmText="Ja, Reset Poules"
+        isOpen={pendingAction !== null}
+        onClose={() => setPendingAction(null)}
+        onConfirm={confirmPendingAction}
+        title={pendingAction === 'reset' ? 'Reset Poules' : 'Opnieuw loten'}
+        confirmText={pendingAction === 'reset' ? 'Ja, reset poules' : 'Ja, opnieuw loten'}
         cancelText="Annuleer"
         confirmVariant="danger"
       >
-        <p>Weet je zeker dat je alle poule-indelingen wilt verwijderen?</p>
-        <p className="text-sm text-gray-700 mt-2">
-          Alle spelers worden uit de poules gehaald. Je kunt daarna opnieuw loten.
+        <p>
+          {pendingAction === 'reset'
+            ? 'Weet je zeker dat je alle poule-indelingen wilt verwijderen?'
+            : 'De huidige poule-indeling wordt vervangen door een nieuwe loting.'}
         </p>
-        <p className="text-sm text-red-600 mt-2 font-semibold">
-          ⚠️ Deze actie kan niet ongedaan worden gemaakt!
-        </p>
+        {tournamentStarted && (
+          <p className="text-sm text-red-600 mt-2 font-semibold">
+            ⚠️ Het toernooi is al gestart: alle uitslagen en finales worden gewist!
+          </p>
+        )}
+        <p className="text-sm text-gray-700 mt-2">Dit kan niet ongedaan worden gemaakt.</p>
       </Modal>
     </div>
   );

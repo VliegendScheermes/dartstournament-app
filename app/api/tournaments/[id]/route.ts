@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db/prisma'
 import { requireAuth } from '@/lib/auth/middleware'
+import { tournamentInclude } from '@/lib/db/tournamentInclude'
+
+const VALID_STATUSES = ['setup', 'pool-play', 'finals', 'completed', 'archived']
 
 // GET /api/tournaments/[id] - Get single tournament with all relations
 export async function GET(
@@ -19,25 +22,7 @@ export async function GET(
         id,
         userId: auth.userId
       },
-      include: {
-        players: true,
-        pools: {
-          include: {
-            players: {
-              include: {
-                player: true
-              }
-            }
-          }
-        },
-        matches: {
-          include: {
-            player1: true,
-            player2: true
-          }
-        },
-        rounds: true
-      }
+      include: tournamentInclude
     })
 
     if (!tournament) {
@@ -72,6 +57,10 @@ export async function PUT(
 
   try {
     const body = await request.json()
+
+    if (body.status !== undefined && !VALID_STATUSES.includes(body.status)) {
+      return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
+    }
 
     // Verify ownership
     const existing = await prisma.tournament.findFirst({
