@@ -1,64 +1,55 @@
 'use client';
 
-import { use, useState, useEffect, useRef } from 'react';
+import { use, useEffect, useRef } from 'react';
 import { useTournamentStore } from '@/lib/store/tournamentStore';
-import { DrawViewerScreen } from '@/components/tournament/DrawViewerScreen';
+import { DrawViewerScreen, usePublicTournamentPolling } from '@/components/tournament/DrawViewerScreen';
 import { PoolViewerScreen } from '@/components/tournament/PoolViewerScreen';
 import { FinalsViewerScreen } from '@/components/tournament/FinalsViewerScreen';
 
 interface LiveViewerPageProps {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
-export default function LiveViewerPage({ params }: LiveViewerPageProps) {
+type ViewerScreen = 'draw' | 'pools' | 'finals';
+
+const SCREEN_LABELS: Record<ViewerScreen, string> = {
+  draw: 'Draw View',
+  pools: 'Pool View',
+  finals: 'Finals View',
+};
+
+export default function LiveViewerPage({ params, searchParams }: LiveViewerPageProps) {
   const { id } = use(params);
-  const [isHydrated, setIsHydrated] = useState(false);
-  const [isLoadingData, setIsLoadingData] = useState(true);
-  const [opacity, setOpacity] = useState(1);
-  const [debugMode, setDebugMode] = useState(false);
-  const prevStatusRef = useRef<string | undefined>(undefined);
+  const debugMode = use(searchParams).debug === '1';
+  const screenRef = useRef<HTMLDivElement>(null);
+  const shownScreenRef = useRef<ViewerScreen | null>(null);
 
   // Single source of truth: backend tournament status
   const tournament = useTournamentStore(state => state.tournaments.find(t => t.id === id));
-  const loadTournamentPublic = useTournamentStore(state => state.loadTournamentPublic);
-
-  useEffect(() => {
-    setIsHydrated(true);
-  }, []);
 
   // Poll public API every 3s (no auth required — works for OBS, public viewers)
-  useEffect(() => {
-    let cancelled = false;
-    const doFirstLoad = async () => {
-      await loadTournamentPublic(id);
-      if (!cancelled) setIsLoadingData(false);
-    };
-    doFirstLoad();
-    const interval = setInterval(() => loadTournamentPublic(id), 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [id, loadTournamentPublic]);
+  const loaded = usePublicTournamentPolling(id, 3000);
 
-  useEffect(() => {
-    setDebugMode(new URLSearchParams(window.location.search).get('debug') === '1');
-  }, []);
+  // Authoritative phase from backend — no heuristics. An archived tournament keeps
+  // showing the phase it was archived in.
+  const phase = tournament?.status === 'archived'
+    ? tournament.drawState?.statusBeforeArchive ?? 'completed'
+    : tournament?.status;
+  const screen: ViewerScreen | null = !phase
+    ? null
+    : phase === 'setup' ? 'draw' : phase === 'pool-play' ? 'pools' : 'finals';
 
-  // Fade transition only when status actually changes between real values (not on initial load)
+  // Fade the new screen in when the phase changes (not on initial load)
   useEffect(() => {
-    const newStatus = tournament?.status;
-    if (prevStatusRef.current === undefined || newStatus === undefined || prevStatusRef.current === newStatus) {
-      prevStatusRef.current = newStatus;
-      return;
+    if (!loaded || !screen) return;
+    if (shownScreenRef.current && shownScreenRef.current !== screen) {
+      screenRef.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 350, easing: 'ease' });
     }
-    prevStatusRef.current = newStatus;
-    setOpacity(0);
-    const timer = setTimeout(() => setOpacity(1), 350);
-    return () => clearTimeout(timer);
-  }, [tournament?.status]);
+    shownScreenRef.current = screen;
+  }, [loaded, screen]);
 
-  if (!isHydrated || isLoadingData) {
+  if (!loaded) {
     return (
       <div style={{ minHeight: '100vh', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <p style={{ color: '#d4af37', fontFamily: 'Georgia, serif' }}>Loading...</p>
@@ -66,7 +57,7 @@ export default function LiveViewerPage({ params }: LiveViewerPageProps) {
     );
   }
 
-  if (!tournament) {
+  if (!tournament || !screen) {
     return (
       <div style={{ minHeight: '100vh', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <p style={{ color: '#d4af37', fontFamily: 'Georgia, serif' }}>Tournament not found</p>
@@ -74,24 +65,19 @@ export default function LiveViewerPage({ params }: LiveViewerPageProps) {
     );
   }
 
-  // Authoritative phase from backend — no heuristics, no derived state
-  const status = tournament.status;
-
   const renderScreen = () => {
-    switch (status) {
-      case 'pool-play':
+    switch (screen) {
+      case 'pools':
         return <PoolViewerScreen id={id} />;
       case 'finals':
-      case 'completed':
         return <FinalsViewerScreen id={id} />;
       default:
-        // 'setup' or any other status → draw view
         return <DrawViewerScreen id={id} />;
     }
   };
 
   return (
-    <div style={{ transition: 'opacity 0.35s ease', opacity, minHeight: '100vh', background: '#000' }}>
+    <div ref={screenRef} style={{ minHeight: '100vh', background: '#000' }}>
       {renderScreen()}
 
       {debugMode && (
@@ -103,11 +89,11 @@ export default function LiveViewerPage({ params }: LiveViewerPageProps) {
           minWidth: 240,
         }}>
           <div className="font-bold mb-1">🛠 Debug</div>
-          <div>backend status: <span style={{ color: '#fdf5e6' }}>{status}</span></div>
-          <div>rendering: <span style={{ color: '#fdf5e6' }}>
-            {status === 'pool-play' ? 'Pool View' :
-             (status === 'finals' || status === 'completed') ? 'Finals View' : 'Draw View'}
-          </span></div>
+          <div>backend status: <span style={{ color: '#fdf5e6' }}>{tournament.status}</span></div>
+          {tournament.status === 'archived' && (
+            <div>archived in: <span style={{ color: '#fdf5e6' }}>{tournament.drawState?.statusBeforeArchive ?? '—'}</span></div>
+          )}
+          <div>rendering: <span style={{ color: '#fdf5e6' }}>{SCREEN_LABELS[screen]}</span></div>
           <div>pools drawn: <span style={{ color: '#fdf5e6' }}>
             {tournament.pools.filter(p => p.playerIds.length > 0).length}/{tournament.pools.length}
           </span></div>

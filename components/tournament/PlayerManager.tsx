@@ -18,6 +18,9 @@ interface PlayerManagerProps {
   onSave: (players: Player[]) => void;
 }
 
+// Names are compared without surrounding spaces and case: "Jan", "jan" and " Jan" are the same
+const normalizeName = (name: string) => name.trim().toLowerCase();
+
 export const PlayerManager: React.FC<PlayerManagerProps> = ({ players, useClasses, onSave }) => {
   const [playerList, setPlayerList] = useState<Player[]>(players);
   const [newPlayerName, setNewPlayerName] = useState('');
@@ -27,8 +30,29 @@ export const PlayerManager: React.FC<PlayerManagerProps> = ({ players, useClasse
     setPlayerList(players);
   }, [players]);
 
+  // Names used more than once (shown once each, as typed first)
+  const nameCounts = new Map<string, number>();
+  playerList.forEach((p) => {
+    const key = normalizeName(p.name);
+    if (key) nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+  });
+  const isDuplicateName = (name: string) => (nameCounts.get(normalizeName(name)) ?? 0) > 1;
+  const duplicateNames = Array.from(nameCounts)
+    .filter(([, count]) => count > 1)
+    .map(([key]) => playerList.find((p) => normalizeName(p.name) === key)?.name.trim() ?? key);
+
+  // The draw only uses saved players, so point out edits that are not saved yet
+  const savedPlayers = new Map(players.map((p) => [p.id, p]));
+  const hasUnsavedChanges =
+    playerList.length !== players.length ||
+    playerList.some((p) => {
+      const saved = savedPlayers.get(p.id);
+      return !saved || saved.name !== p.name.trim() || (saved.class ?? null) !== (p.class ?? null);
+    });
+
   const handleAddPlayer = () => {
-    if (!newPlayerName.trim()) return;
+    const name = newPlayerName.trim();
+    if (!name) return;
 
     if (playerList.length >= VALIDATION.MAX_PLAYERS) {
       alert(`Maximum ${VALIDATION.MAX_PLAYERS} players allowed`);
@@ -36,9 +60,7 @@ export const PlayerManager: React.FC<PlayerManagerProps> = ({ players, useClasse
     }
 
     // Check for duplicate names
-    const isDuplicate = playerList.some(
-      (p) => p.name.toLowerCase() === newPlayerName.trim().toLowerCase()
-    );
+    const isDuplicate = playerList.some((p) => normalizeName(p.name) === normalizeName(name));
 
     if (isDuplicate) {
       alert('A player with this name already exists');
@@ -47,7 +69,7 @@ export const PlayerManager: React.FC<PlayerManagerProps> = ({ players, useClasse
 
     const newPlayer: Player = {
       id: uuidv4(),
-      name: newPlayerName.trim(),
+      name,
       class: null,
     };
 
@@ -84,7 +106,13 @@ export const PlayerManager: React.FC<PlayerManagerProps> = ({ players, useClasse
       return;
     }
 
-    onSave(playerList);
+    // Validate unique names (also after renaming)
+    if (duplicateNames.length > 0) {
+      alert(`Player names must be unique: ${duplicateNames.join(', ')}`);
+      return;
+    }
+
+    onSave(playerList.map((p) => ({ ...p, name: p.name.trim() })));
   };
 
   const handleReset = () => {
@@ -105,8 +133,11 @@ export const PlayerManager: React.FC<PlayerManagerProps> = ({ players, useClasse
                 type="text"
                 value={player.name}
                 onChange={(e) => handleUpdatePlayerName(player.id, e.target.value)}
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className={`flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                  isDuplicateName(player.name) ? 'border-red-400 bg-red-50' : 'border-gray-300'
+                }`}
                 placeholder="Player name"
+                title={isDuplicateName(player.name) ? 'Another player has this name' : undefined}
               />
               {useClasses && (
                 <select
@@ -157,6 +188,12 @@ export const PlayerManager: React.FC<PlayerManagerProps> = ({ players, useClasse
           </div>
         )}
 
+        {duplicateNames.length > 0 && (
+          <p className="text-sm text-red-600">
+            Duplicate names: {duplicateNames.join(', ')} — every player needs a unique name.
+          </p>
+        )}
+
         {/* Info */}
         <div className="text-sm text-gray-500">
           Players: {playerList.length} / {VALIDATION.MAX_PLAYERS}
@@ -166,6 +203,12 @@ export const PlayerManager: React.FC<PlayerManagerProps> = ({ players, useClasse
             </span>
           )}
         </div>
+
+        {hasUnsavedChanges && (
+          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            Unsaved changes — click Opslaan. The draw only uses saved players.
+          </p>
+        )}
 
         {/* Buttons */}
         <div className="flex gap-2 mt-4">

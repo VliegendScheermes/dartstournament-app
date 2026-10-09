@@ -18,40 +18,54 @@ interface VideoPageProps {
 export default function VideoPage({ params }: VideoPageProps) {
   const { id } = use(params);
   const router = useRouter();
-  const [isHydrated, setIsHydrated] = React.useState(false);
-  const [youtubeUrl, setYoutubeUrl] = React.useState('');
+  const [loadedId, setLoadedId] = React.useState<string | null>(null);
+  // null = not edited: the field shows the saved URL
+  const [youtubeUrl, setYoutubeUrl] = React.useState<string | null>(null);
   const [isSaving, setIsSaving] = React.useState(false);
-  const [saveMessage, setSaveMessage] = React.useState('');
+  const [saveMessage, setSaveMessage] = React.useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const { getTournament, updateSettings } = useTournamentStore();
-  const tournament = getTournament(id);
+  const tournament = useTournamentStore((state) => state.tournaments.find((t) => t.id === id));
+  const loadTournament = useTournamentStore((state) => state.loadTournament);
+  const updateSettings = useTournamentStore((state) => state.updateSettings);
+  const loadError = useTournamentStore((state) => state.error);
 
+  // This page opens in a new tab, so it loads the tournament itself
   React.useEffect(() => {
-    setIsHydrated(true);
-  }, []);
+    let cancelled = false;
+    loadTournament(id).then(() => {
+      if (!cancelled) setLoadedId(id);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, loadTournament]);
 
+  // Hide the success message after a few seconds
   React.useEffect(() => {
-    if (tournament?.settings.youtubeStreamUrl) {
-      setYoutubeUrl(tournament.settings.youtubeStreamUrl);
-    }
-  }, [tournament]);
-
-  if (!isHydrated) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading...</p>
-        </div>
-      </div>
-    );
-  }
+    if (saveMessage?.type !== 'success') return;
+    const timer = setTimeout(() => setSaveMessage(null), 3000);
+    return () => clearTimeout(timer);
+  }, [saveMessage]);
 
   if (!tournament) {
+    if (loadedId !== id) {
+      return (
+        <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading...</p>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900 mb-4">Tournament Not Found</h1>
+          <h1 className="text-2xl font-bold text-gray-900 mb-4">
+            {loadError ? 'Failed to Load Tournament' : 'Tournament Not Found'}
+          </h1>
+          {loadError && <p className="text-red-600 mb-4">{loadError}</p>}
           <button
             onClick={() => router.push('/')}
             className="text-blue-600 hover:underline"
@@ -63,19 +77,29 @@ export default function VideoPage({ params }: VideoPageProps) {
     );
   }
 
-  const handleSave = () => {
+  const urlValue = youtubeUrl ?? tournament.settings.youtubeStreamUrl ?? '';
+  const trimmedUrl = urlValue.trim();
+
+  const handleSave = async () => {
     setIsSaving(true);
-    setSaveMessage('');
+    setSaveMessage(null);
 
     try {
-      updateSettings(id, {
-        youtubeStreamUrl: youtubeUrl.trim() || undefined,
+      // An empty field removes the URL
+      await updateSettings(id, {
+        youtubeStreamUrl: trimmedUrl || undefined,
       });
 
-      setSaveMessage('YouTube livestream URL saved successfully!');
-      setTimeout(() => setSaveMessage(''), 3000);
+      setYoutubeUrl(null);
+      setSaveMessage({
+        type: 'success',
+        text: trimmedUrl ? 'YouTube livestream URL saved successfully!' : 'YouTube livestream URL removed.',
+      });
     } catch (error) {
-      setSaveMessage('Error saving settings. Please try again.');
+      setSaveMessage({
+        type: 'error',
+        text: `Error saving settings: ${error instanceof Error ? error.message : String(error)}. Please try again.`,
+      });
     } finally {
       setIsSaving(false);
     }
@@ -100,7 +124,7 @@ export default function VideoPage({ params }: VideoPageProps) {
         <Card className="mb-6">
           <h2 className="text-xl font-bold text-gray-900 mb-4">YouTube Livestream</h2>
           <p className="text-sm text-gray-600 mb-4">
-            Add your YouTube livestream URL to enable the "Watch Tournament Live" button on viewer pages.
+            Add your YouTube livestream URL to enable the &quot;Watch Tournament Live&quot; button on viewer pages.
           </p>
 
           <div className="space-y-4">
@@ -114,7 +138,7 @@ export default function VideoPage({ params }: VideoPageProps) {
               <input
                 id="youtube-url"
                 type="url"
-                value={youtubeUrl}
+                value={urlValue}
                 onChange={(e) => setYoutubeUrl(e.target.value)}
                 placeholder="https://www.youtube.com/watch?v=..."
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -136,19 +160,19 @@ export default function VideoPage({ params }: VideoPageProps) {
               {saveMessage && (
                 <p
                   className={`text-sm ${
-                    saveMessage.includes('Error')
+                    saveMessage.type === 'error'
                       ? 'text-red-600'
                       : 'text-green-600'
                   }`}
                 >
-                  {saveMessage}
+                  {saveMessage.text}
                 </p>
               )}
             </div>
           </div>
 
           {/* Preview */}
-          {youtubeUrl.trim() && (
+          {trimmedUrl && (
             <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
               <h3 className="text-sm font-semibold text-blue-900 mb-2">Preview</h3>
               <p className="text-sm text-blue-800">
@@ -156,12 +180,12 @@ export default function VideoPage({ params }: VideoPageProps) {
                 <br />
                 <span className="font-semibold">🎯 Watch Tournament Live</span>
                 <br />
-                Clicking will open: {youtubeUrl}
+                Clicking will open: {trimmedUrl}
               </p>
             </div>
           )}
 
-          {!youtubeUrl.trim() && (
+          {!trimmedUrl && (
             <div className="mt-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
               <p className="text-sm text-gray-600">
                 When no URL is provided, viewer pages will display:

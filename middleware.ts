@@ -7,12 +7,19 @@ import { createServerClient } from '@supabase/ssr'
  * Public routes (no login required):
  *   /login, /register
  *   /tournament/[id]/live-viewer   — share with audience / OBS
+ *   /tournament/[id]/viewer        — pool play view (beamer / OBS)
+ *   /tournament/[id]/draw-viewer   — live draw view (beamer / OBS)
+ *   /tournament/[id]/finals-viewer — finals view (beamer / OBS)
  *   /tournament/[id]/obs-overlay   — OBS browser source
  *   /tournament/[id]/split-view    — OBS split-screen source
  *
  * All other pages redirect to /login when not authenticated.
  * API routes are always skipped — they handle auth via requireAuth (Bearer token).
  */
+
+// Read-only tournament pages; they load their data from the public API
+const PUBLIC_TOURNAMENT_PAGE =
+  /^\/tournament\/[^/]+\/(live-viewer|viewer|draw-viewer|finals-viewer|obs-overlay|split-view)\/?$/
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -32,18 +39,12 @@ export async function middleware(request: NextRequest) {
   }
 
   // Public pages — always allow without auth
-  // Check by splitting on '/' so we match exact path segments
-  const segments = pathname.split('/')
-  const lastSegment = segments[segments.length - 1] || segments[segments.length - 2]
-
   if (
     pathname === '/login' ||
     pathname.startsWith('/login/') ||
     pathname === '/register' ||
     pathname.startsWith('/register/') ||
-    lastSegment === 'live-viewer' ||
-    lastSegment === 'obs-overlay' ||
-    lastSegment === 'split-view'
+    PUBLIC_TOURNAMENT_PAGE.test(pathname)
   ) {
     return NextResponse.next()
   }

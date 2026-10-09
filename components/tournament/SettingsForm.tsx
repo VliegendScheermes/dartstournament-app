@@ -5,7 +5,7 @@
 
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
@@ -16,13 +16,42 @@ interface SettingsFormProps {
   onSave: (settings: TournamentSettings) => void;
 }
 
+type NumberField =
+  | 'numPools'
+  | 'numBoards'
+  | 'advanceToCrossFinals'
+  | 'advanceToLosersFinal'
+  | 'liveDrawDelaySeconds';
+
+// Allowed range per number field; typed values are clamped to it on blur and on save
+const NUMBER_LIMITS: Record<NumberField, { min: number; max: number }> = {
+  numPools: { min: VALIDATION.MIN_POOLS, max: VALIDATION.MAX_POOLS },
+  numBoards: { min: VALIDATION.MIN_BOARDS, max: VALIDATION.MAX_BOARDS },
+  advanceToCrossFinals: { min: 1, max: VALIDATION.MAX_PLAYERS },
+  advanceToLosersFinal: { min: 0, max: VALIDATION.MAX_PLAYERS },
+  liveDrawDelaySeconds: { min: 0, max: 10 },
+};
+
+const NUMBER_FIELDS = Object.keys(NUMBER_LIMITS) as NumberField[];
+
+const clampNumber = (field: NumberField, value: number): number => {
+  const { min, max } = NUMBER_LIMITS[field];
+  return Math.min(max, Math.max(min, Math.round(value)));
+};
+
 export const SettingsForm: React.FC<SettingsFormProps> = ({ settings, onSave }) => {
   const [formData, setFormData] = useState<TournamentSettings>(settings);
+  // Text being typed in a number field; it may be empty or out of range until blur/save
+  const [drafts, setDrafts] = useState<Partial<Record<NumberField, string>>>({});
   const [resetModal, setResetModal] = useState(false);
 
-  useEffect(() => {
+  // Show the saved settings again whenever they change (e.g. after saving)
+  const [shownSettings, setShownSettings] = useState(settings);
+  if (settings !== shownSettings) {
+    setShownSettings(settings);
     setFormData(settings);
-  }, [settings]);
+    setDrafts({});
+  }
 
   const handleChange = (field: keyof TournamentSettings, value: string | number | boolean) => {
     setFormData((prev) => ({
@@ -31,19 +60,93 @@ export const SettingsForm: React.FC<SettingsFormProps> = ({ settings, onSave }) 
     }));
   };
 
+  // The typed number, or the last valid value while the field is empty or invalid
+  const getNumber = (field: NumberField): number => {
+    const typed = Number.parseInt(drafts[field] ?? '', 10);
+    return Number.isNaN(typed) ? formData[field] : typed;
+  };
+
+  const setNumber = (field: NumberField, value: number) => {
+    setFormData((prev) => ({ ...prev, [field]: clampNumber(field, value) }));
+    setDrafts((prev) => {
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  };
+
+  const commitNumber = (field: NumberField) => {
+    if (drafts[field] !== undefined) setNumber(field, getNumber(field));
+  };
+
   const handleSave = () => {
-    onSave(formData);
+    const saved: TournamentSettings = {
+      ...formData,
+      // An empty name would not be saved
+      tournamentName: formData.tournamentName.trim() || settings.tournamentName,
+      // Set on the Video page, not in this form
+      youtubeStreamUrl: settings.youtubeStreamUrl,
+    };
+    NUMBER_FIELDS.forEach((field) => {
+      saved[field] = clampNumber(field, getNumber(field));
+    });
+    setFormData(saved);
+    setDrafts({});
+    onSave(saved);
   };
 
   const handleReset = () => {
-    const resetSettings = {
+    const resetSettings: TournamentSettings = {
       ...DEFAULT_TOURNAMENT_SETTINGS,
-      tournamentName: formData.tournamentName, // Keep tournament name
+      tournamentName: formData.tournamentName.trim() || settings.tournamentName, // Keep tournament name
+      youtubeStreamUrl: settings.youtubeStreamUrl, // Set on the Video page, not reset here
     };
     setFormData(resetSettings);
+    setDrafts({});
     onSave(resetSettings);
     setResetModal(false);
   };
+
+  const renderNumberField = (field: NumberField, label: string, hint?: string) => {
+    const { min, max } = NUMBER_LIMITS[field];
+    return (
+      <div>
+        <label htmlFor={`settings-${field}`} className="block text-sm font-medium text-gray-700 mb-1">
+          {label}
+        </label>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setNumber(field, getNumber(field) - 1)}
+            className="w-10 h-10 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold"
+          >
+            -
+          </button>
+          <input
+            id={`settings-${field}`}
+            type="number"
+            value={drafts[field] ?? formData[field]}
+            onChange={(e) => {
+              const value = e.target.value;
+              setDrafts((prev) => ({ ...prev, [field]: value }));
+            }}
+            onBlur={() => commitNumber(field)}
+            min={min}
+            max={max}
+            className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+          <button
+            onClick={() => setNumber(field, getNumber(field) + 1)}
+            className="w-10 h-10 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold"
+          >
+            +
+          </button>
+        </div>
+        {hint && <p className="text-xs text-gray-500 mt-1">{hint}</p>}
+      </div>
+    );
+  };
+
+  const losersPerPool = clampNumber('advanceToLosersFinal', getNumber('advanceToLosersFinal'));
 
   return (
     <Card title="Tournament Settings">
@@ -62,158 +165,31 @@ export const SettingsForm: React.FC<SettingsFormProps> = ({ settings, onSave }) 
           />
         </div>
 
-        {/* Number of Pools */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Number of Pools
-          </label>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() =>
-                handleChange(
-                  'numPools',
-                  Math.max(VALIDATION.MIN_POOLS, formData.numPools - 1)
-                )
-              }
-              className="w-10 h-10 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold"
-            >
-              -
-            </button>
-            <input
-              type="number"
-              value={formData.numPools}
-              onChange={(e) => handleChange('numPools', parseInt(e.target.value) || VALIDATION.MIN_POOLS)}
-              min={VALIDATION.MIN_POOLS}
-              max={VALIDATION.MAX_POOLS}
-              className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            <button
-              onClick={() =>
-                handleChange(
-                  'numPools',
-                  Math.min(VALIDATION.MAX_POOLS, formData.numPools + 1)
-                )
-              }
-              className="w-10 h-10 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold"
-            >
-              +
-            </button>
-          </div>
-        </div>
+        {renderNumberField(
+          'numPools',
+          'Number of Pools',
+          `${VALIDATION.MIN_POOLS}–${VALIDATION.MAX_POOLS} pools`
+        )}
 
-        {/* Number of Boards */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Number of Boards
-          </label>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() =>
-                handleChange(
-                  'numBoards',
-                  Math.max(VALIDATION.MIN_BOARDS, formData.numBoards - 1)
-                )
-              }
-              className="w-10 h-10 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold"
-            >
-              -
-            </button>
-            <input
-              type="number"
-              value={formData.numBoards}
-              onChange={(e) => handleChange('numBoards', parseInt(e.target.value) || VALIDATION.MIN_BOARDS)}
-              min={VALIDATION.MIN_BOARDS}
-              max={VALIDATION.MAX_BOARDS}
-              className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            <button
-              onClick={() =>
-                handleChange(
-                  'numBoards',
-                  Math.min(VALIDATION.MAX_BOARDS, formData.numBoards + 1)
-                )
-              }
-              className="w-10 h-10 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold"
-            >
-              +
-            </button>
-          </div>
-        </div>
+        {renderNumberField(
+          'numBoards',
+          'Number of Boards',
+          `${VALIDATION.MIN_BOARDS}–${VALIDATION.MAX_BOARDS} boards`
+        )}
 
-        {/* Advance to Cross Finals */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Advance to Cross Finals (per pool)
-          </label>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() =>
-                handleChange(
-                  'advanceToCrossFinals',
-                  Math.max(1, formData.advanceToCrossFinals - 1)
-                )
-              }
-              className="w-10 h-10 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold"
-            >
-              -
-            </button>
-            <input
-              type="number"
-              value={formData.advanceToCrossFinals}
-              onChange={(e) => handleChange('advanceToCrossFinals', parseInt(e.target.value) || 1)}
-              min={1}
-              className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            <button
-              onClick={() =>
-                handleChange('advanceToCrossFinals', formData.advanceToCrossFinals + 1)
-              }
-              className="w-10 h-10 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold"
-            >
-              +
-            </button>
-          </div>
-        </div>
+        {renderNumberField('advanceToCrossFinals', 'Advance to Cross Finals (per pool)')}
 
-        {/* Advance to Losers Final */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Advance to Losers Final (per pool)
-          </label>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() =>
-                handleChange(
-                  'advanceToLosersFinal',
-                  Math.max(0, formData.advanceToLosersFinal - 1)
-                )
-              }
-              className="w-10 h-10 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold"
-            >
-              -
-            </button>
-            <input
-              type="number"
-              value={formData.advanceToLosersFinal}
-              onChange={(e) => handleChange('advanceToLosersFinal', parseInt(e.target.value) || 0)}
-              min={0}
-              className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            <button
-              onClick={() =>
-                handleChange('advanceToLosersFinal', formData.advanceToLosersFinal + 1)
-              }
-              className="w-10 h-10 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold"
-            >
-              +
-            </button>
-          </div>
-          <p className="text-xs text-gray-500 mt-1">
-            {formData.advanceToLosersFinal === 0
-              ? 'Losers bracket disabled'
-              : `${formData.advanceToLosersFinal} player(s) from each pool`}
-          </p>
-        </div>
+        {renderNumberField(
+          'advanceToLosersFinal',
+          'Advance to Losers Final (per pool)',
+          losersPerPool === 0 ? 'Losers bracket disabled' : `${losersPerPool} player(s) from each pool`
+        )}
+
+        {renderNumberField(
+          'liveDrawDelaySeconds',
+          'Live Loting Delay (seconds)',
+          'Time between two players during Live Loting (0–10 s)'
+        )}
 
         {/* Use Classes */}
         <div className="flex items-center gap-2">

@@ -1,32 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
 import { useTournamentStore } from '@/lib/store/tournamentStore';
 import { ViewerStandingsTable } from '@/components/tournament/ViewerStandingsTable';
 import { ViewerMatchSchedule } from '@/components/tournament/ViewerMatchSchedule';
 
 export function PoolViewerScreen({ id }: { id: string }) {
-  const [isHydrated, setIsHydrated] = useState(false);
-
   const tournament = useTournamentStore(state => state.tournaments.find(t => t.id === id));
   const getStandings = useTournamentStore(state => state.getStandings);
 
-  useEffect(() => {
-    setIsHydrated(true);
-  }, []);
-
-  // Data is provided by parent LiveViewerPage which polls at 3s — no own interval needed
-
-  if (!isHydrated) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-amber-900 via-stone-800 to-neutral-900 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500 mx-auto mb-4"></div>
-          <p className="text-amber-100">Loading...</p>
-        </div>
-      </div>
-    );
-  }
+  // Data is loaded and refreshed by the page (usePublicTournamentPolling), which
+  // shows its own loading state until the first load has finished
 
   if (!tournament) {
     return (

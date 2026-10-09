@@ -5,8 +5,10 @@
 
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { StandingsRow } from '@/types/tournament';
+
+type FinalsAssignment = 'CROSS' | 'LOSERS' | 'ELIMINATED' | null;
 
 interface StandingsTableProps {
   poolId: string;
@@ -16,6 +18,7 @@ interface StandingsTableProps {
   bottomPlayers: number;
   boardNumber?: string | null;
   onBoardNumberChange?: (poolId: string, boardNumber: string | null) => void;
+  /** Not used; kept so existing callers keep compiling */
   tournamentId?: string;
   onFinalsAssignmentChange?: (playerId: string, assignment: 'CROSS' | 'LOSERS' | 'ELIMINATED' | null) => void;
   getFinalsAssignment?: (playerId: string) => 'CROSS' | 'LOSERS' | 'ELIMINATED' | null;
@@ -29,14 +32,37 @@ export const StandingsTable: React.FC<StandingsTableProps> = ({
   bottomPlayers,
   boardNumber,
   onBoardNumberChange,
-  tournamentId,
   onFinalsAssignmentChange,
   getFinalsAssignment,
 }) => {
-  const handleBoardNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    if (onBoardNumberChange) {
+  // Board number being typed; saved on blur or Enter (not on every keystroke)
+  const [boardDraft, setBoardDraft] = useState<string | null>(null);
+
+  const commitBoardNumber = () => {
+    if (boardDraft === null) return;
+    const value = boardDraft.trim();
+    setBoardDraft(null);
+    if (onBoardNumberChange && value !== (boardNumber ?? '')) {
       onBoardNumberChange(poolId, value === '' ? null : value);
+    }
+  };
+
+  // Clicking a bracket button puts the player in that bracket; clicking the active one
+  // takes them out again. A manual choice is only stored where it differs from the
+  // automatic placement, so the other players keep following the standings.
+  const toggleBracket = (
+    playerId: string,
+    bracket: 'CROSS' | 'LOSERS',
+    automatic: FinalsAssignment,
+    manual: FinalsAssignment
+  ) => {
+    if (!onFinalsAssignmentChange) return;
+    if ((manual ?? automatic) !== bracket) {
+      onFinalsAssignmentChange(playerId, automatic === bracket ? null : bracket);
+    } else if (manual === bracket && automatic !== bracket) {
+      onFinalsAssignmentChange(playerId, null); // back to the automatic placement
+    } else {
+      onFinalsAssignmentChange(playerId, 'ELIMINATED'); // placed there automatically: override
     }
   };
 
@@ -49,8 +75,13 @@ export const StandingsTable: React.FC<StandingsTableProps> = ({
           <input
             type="text"
             maxLength={3}
-            value={boardNumber ?? ''}
-            onChange={handleBoardNumberChange}
+            value={boardDraft ?? boardNumber ?? ''}
+            onChange={(e) => setBoardDraft(e.target.value)}
+            onBlur={commitBoardNumber}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur();
+              if (e.key === 'Escape') setBoardDraft(null);
+            }}
             className="w-14 px-2 py-1 text-center border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
             placeholder="-"
           />
@@ -72,11 +103,14 @@ export const StandingsTable: React.FC<StandingsTableProps> = ({
               const isTopPlayer = index < topPlayers;
               const isBottomPlayer = index >= standings.length - bottomPlayers;
 
+              // Placement by the standings (top players take precedence, as in the finals draw)
+              const automatic: FinalsAssignment = isTopPlayer ? 'CROSS' : isBottomPlayer ? 'LOSERS' : null;
+
               // Get manual assignment if available
-              const manualAssignment = getFinalsAssignment ? getFinalsAssignment(row.playerId) : null;
+              const manual = getFinalsAssignment ? getFinalsAssignment(row.playerId) : null;
 
               // Determine final assignment (manual override or auto)
-              const assignment = manualAssignment || (isTopPlayer ? 'CROSS' : isBottomPlayer ? 'LOSERS' : null);
+              const assignment = manual ?? automatic;
 
               return (
                 <tr
@@ -91,7 +125,7 @@ export const StandingsTable: React.FC<StandingsTableProps> = ({
                     {onFinalsAssignmentChange ? (
                       <div className="inline-flex ml-2 gap-1">
                         <button
-                          onClick={() => onFinalsAssignmentChange(row.playerId, assignment === 'CROSS' ? null : 'CROSS')}
+                          onClick={() => toggleBracket(row.playerId, 'CROSS', automatic, manual)}
                           className={`text-xs px-1.5 py-0.5 rounded border ${
                             assignment === 'CROSS'
                               ? 'bg-green-600 text-white border-green-700'
@@ -102,7 +136,7 @@ export const StandingsTable: React.FC<StandingsTableProps> = ({
                           Cross
                         </button>
                         <button
-                          onClick={() => onFinalsAssignmentChange(row.playerId, assignment === 'LOSERS' ? null : 'LOSERS')}
+                          onClick={() => toggleBracket(row.playerId, 'LOSERS', automatic, manual)}
                           className={`text-xs px-1.5 py-0.5 rounded border ${
                             assignment === 'LOSERS'
                               ? 'bg-orange-600 text-white border-orange-700'
@@ -113,13 +147,15 @@ export const StandingsTable: React.FC<StandingsTableProps> = ({
                           Losers
                         </button>
                         <button
-                          onClick={() => onFinalsAssignmentChange(row.playerId, 'ELIMINATED')}
+                          onClick={() =>
+                            onFinalsAssignmentChange(row.playerId, manual === 'ELIMINATED' ? null : 'ELIMINATED')
+                          }
                           className={`text-xs px-1.5 py-0.5 rounded border ${
-                            assignment === 'ELIMINATED'
+                            manual === 'ELIMINATED'
                               ? 'bg-gray-600 text-white border-gray-700'
                               : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
                           }`}
-                          title="Eliminate from finals"
+                          title={manual === 'ELIMINATED' ? 'Undo: place by standings again' : 'Eliminate from finals'}
                         >
                           -
                         </button>

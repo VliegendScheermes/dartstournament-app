@@ -20,10 +20,10 @@ export const TournamentList: React.FC = () => {
     createTournament,
     deleteTournament,
     archiveTournament,
+    unarchiveTournament,
     setCurrentTournament,
     getActiveTournaments,
     getArchivedTournaments,
-    updateStatus,
     isLoading,
     error,
   } = useTournamentStore();
@@ -51,17 +51,19 @@ export const TournamentList: React.FC = () => {
     }
   };
 
+  // Page for the tournament's phase; an archived tournament opens in the phase it was archived in
+  const getPhasePage = (tournament: Tournament): string => {
+    const phase = tournament.status === 'archived'
+      ? tournament.drawState?.statusBeforeArchive ?? 'finals'
+      : tournament.status;
+    if (phase === 'setup') return 'setup';
+    if (phase === 'pool-play') return 'pool-play';
+    return 'finals';
+  };
+
   const handleOpenTournament = (tournament: Tournament) => {
     setCurrentTournament(tournament.id);
-
-    // Navigate based on tournament status
-    if (tournament.status === 'setup') {
-      router.push(`/tournament/${tournament.id}/setup`);
-    } else if (tournament.status === 'pool-play') {
-      router.push(`/tournament/${tournament.id}/pool-play`);
-    } else if (tournament.status === 'finals' || tournament.status === 'completed') {
-      router.push(`/tournament/${tournament.id}/finals`);
-    }
+    router.push(`/tournament/${tournament.id}/${getPhasePage(tournament)}`);
   };
 
   const handleArchive = async (tournament: Tournament) => {
@@ -74,7 +76,8 @@ export const TournamentList: React.FC = () => {
 
   const handleUnarchive = async (tournament: Tournament) => {
     try {
-      await updateStatus(tournament.id, tournament.status === 'completed' ? 'completed' : 'setup');
+      // Restores the phase the tournament was archived in
+      await unarchiveTournament(tournament.id);
     } catch (error) {
       console.error('Failed to unarchive tournament:', error);
     }

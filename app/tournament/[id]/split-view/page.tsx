@@ -12,9 +12,9 @@
  * 3. The tournament view fills the right half automatically
  */
 
-import { use, useState, useEffect, useRef } from 'react';
+import { use, useEffect, useRef } from 'react';
 import { useTournamentStore } from '@/lib/store/tournamentStore';
-import { DrawViewerScreen } from '@/components/tournament/DrawViewerScreen';
+import { DrawViewerScreen, usePublicTournamentPolling } from '@/components/tournament/DrawViewerScreen';
 import { PoolViewerScreen } from '@/components/tournament/PoolViewerScreen';
 import { FinalsViewerScreen } from '@/components/tournament/FinalsViewerScreen';
 
@@ -22,58 +22,40 @@ interface SplitViewPageProps {
   params: Promise<{ id: string }>;
 }
 
+type ViewerScreen = 'draw' | 'pools' | 'finals';
+
 export default function SplitViewPage({ params }: SplitViewPageProps) {
   const { id } = use(params);
-  const [isHydrated, setIsHydrated] = useState(false);
-  const [isLoadingData, setIsLoadingData] = useState(true);
-  const prevStatusRef = useRef<string | undefined>(undefined);
-  const [opacity, setOpacity] = useState(1);
+  const screenRef = useRef<HTMLDivElement>(null);
+  const shownScreenRef = useRef<ViewerScreen | null>(null);
 
   const tournament = useTournamentStore(state => state.tournaments.find(t => t.id === id));
-  const loadTournamentPublic = useTournamentStore(state => state.loadTournamentPublic);
-
-  useEffect(() => {
-    setIsHydrated(true);
-  }, []);
 
   // Poll public API every 3s (no auth required — works for OBS, public viewers)
-  useEffect(() => {
-    let cancelled = false;
-    const doFirstLoad = async () => {
-      await loadTournamentPublic(id);
-      if (!cancelled) setIsLoadingData(false);
-    };
-    doFirstLoad();
-    const interval = setInterval(() => loadTournamentPublic(id), 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [id, loadTournamentPublic]);
+  const loaded = usePublicTournamentPolling(id, 3000);
 
-  // Fade transition only when status actually changes between real values (not on initial load)
+  // An archived tournament keeps showing the phase it was archived in
+  const phase = tournament?.status === 'archived'
+    ? tournament.drawState?.statusBeforeArchive ?? 'completed'
+    : tournament?.status ?? 'setup';
+  const screen: ViewerScreen = phase === 'setup' ? 'draw' : phase === 'pool-play' ? 'pools' : 'finals';
+
+  // Fade the new screen in when the phase changes (not on initial load)
   useEffect(() => {
-    const newStatus = tournament?.status;
-    if (prevStatusRef.current === undefined || newStatus === undefined || prevStatusRef.current === newStatus) {
-      prevStatusRef.current = newStatus;
-      return;
+    if (!loaded) return;
+    if (shownScreenRef.current && shownScreenRef.current !== screen) {
+      screenRef.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 350, easing: 'ease' });
     }
-    prevStatusRef.current = newStatus;
-    setOpacity(0);
-    const timer = setTimeout(() => setOpacity(1), 350);
-    return () => clearTimeout(timer);
-  }, [tournament?.status]);
+    shownScreenRef.current = screen;
+  }, [loaded, screen]);
 
-  if (!isHydrated || isLoadingData) return null;
-
-  const status = tournament?.status ?? 'setup';
+  if (!loaded) return null;
 
   const renderScreen = () => {
-    switch (status) {
-      case 'pool-play':
+    switch (screen) {
+      case 'pools':
         return <PoolViewerScreen id={id} />;
       case 'finals':
-      case 'completed':
         return <FinalsViewerScreen id={id} />;
       default:
         return <DrawViewerScreen id={id} />;
@@ -100,16 +82,17 @@ export default function SplitViewPage({ params }: SplitViewPageProps) {
         pointerEvents: 'none',
       }} />
 
-      {/* Right half — live tournament content fills 960×1080 naturally */}
-      <div style={{
+      {/* Right half — live tournament content fills 960×1080 naturally.
+          The transform makes this the containing block of position: fixed content
+          (the draw announcement), so it stays in this half instead of covering the camera. */}
+      <div ref={screenRef} style={{
         position: 'absolute',
         right: 0,
         top: 0,
         width: 960,
         height: 1080,
         overflow: 'hidden',
-        transition: 'opacity 0.35s ease',
-        opacity,
+        transform: 'translateZ(0)',
       }}>
         {renderScreen()}
       </div>

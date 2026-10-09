@@ -1,30 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
 import { useTournamentStore } from '@/lib/store/tournamentStore';
 import { ViewerBracketView } from '@/components/tournament/ViewerBracketView';
+import { buildBracket, getBracketSlots } from '@/lib/algorithms/finals';
 
 export function FinalsViewerScreen({ id }: { id: string }) {
-  const [isHydrated, setIsHydrated] = useState(false);
-
   const tournament = useTournamentStore(state => state.tournaments.find(t => t.id === id));
 
-  useEffect(() => {
-    setIsHydrated(true);
-  }, []);
-
-  // Data is provided by parent LiveViewerPage which polls at 3s — no own interval needed
-
-  if (!isHydrated) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500 mx-auto mb-4"></div>
-          <p style={{ color: '#d4af37' }}>Loading...</p>
-        </div>
-      </div>
-    );
-  }
+  // Data is loaded and refreshed by the page (usePublicTournamentPolling), which
+  // shows its own loading state until the first load has finished
 
   if (!tournament) {
     return (
@@ -37,28 +21,26 @@ export function FinalsViewerScreen({ id }: { id: string }) {
     );
   }
 
-  const crossMatches = tournament.matches.filter((m) => m.stage === 'CROSS');
-  const losersMatches = tournament.matches.filter((m) => m.stage === 'LOSERS');
+  // Both brackets are derived from their round-1 slots and the confirmed results
+  const finalsBracket = tournament.drawState?.finalsBracket;
+  const crossBracket = buildBracket(
+    getBracketSlots(finalsBracket, tournament.matches, 'CROSS'),
+    tournament.matches,
+    'CROSS'
+  );
+  const losersBracket = buildBracket(
+    getBracketSlots(finalsBracket, tournament.matches, 'LOSERS'),
+    tournament.matches,
+    'LOSERS'
+  );
+  const showLosers = tournament.settings.advanceToLosersFinal > 0 && losersBracket.rounds.length > 0;
 
-  const finalCrossMatch = crossMatches.find((m) => m.roundIndex === Math.max(...crossMatches.map((m) => m.roundIndex)));
-  const finalLosersMatch = losersMatches.find((m) => m.roundIndex === Math.max(...losersMatches.map((m) => m.roundIndex)));
+  const getPlayerName = (playerId: string | null | undefined): string =>
+    (playerId && tournament.players.find((p) => p.id === playerId)?.name) || '';
 
-  let championName = '';
-  let loserName = '';
-
-  if (finalCrossMatch?.confirmed && finalCrossMatch.legsP1 !== null && finalCrossMatch.legsP2 !== null) {
-    const winnerId = finalCrossMatch.legsP1 > finalCrossMatch.legsP2
-      ? finalCrossMatch.player1Id
-      : finalCrossMatch.player2Id;
-    championName = tournament.players.find((p) => p.id === winnerId)?.name || '';
-  }
-
-  if (finalLosersMatch?.confirmed && finalLosersMatch.legsP1 !== null && finalLosersMatch.legsP2 !== null) {
-    const loserId = finalLosersMatch.legsP1 < finalLosersMatch.legsP2
-      ? finalLosersMatch.player1Id
-      : finalLosersMatch.player2Id;
-    loserName = tournament.players.find((p) => p.id === loserId)?.name || '';
-  }
+  // Only known once the final of each bracket has been decided
+  const championName = getPlayerName(crossBracket.resultId);
+  const loserName = showLosers ? getPlayerName(losersBracket.resultId) : '';
 
   return (
     <div className="min-h-screen py-8 px-4" style={{
@@ -139,7 +121,7 @@ export function FinalsViewerScreen({ id }: { id: string }) {
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {tournament.settings.advanceToLosersFinal > 0 && losersMatches.length > 0 && (
+          {showLosers && (
             <div className="lg:col-span-6 h-full p-4 rounded-lg" style={{
               background: '#000000',
               border: '2px solid #1a1a1a'
@@ -147,21 +129,21 @@ export function FinalsViewerScreen({ id }: { id: string }) {
               <ViewerBracketView
                 title="Losers Bracket"
                 subtitle="Loser Advances"
-                matches={losersMatches}
+                rounds={losersBracket.rounds}
                 players={tournament.players}
                 isLosers={true}
               />
             </div>
           )}
 
-          <div className={`${tournament.settings.advanceToLosersFinal > 0 ? 'lg:col-span-6' : 'lg:col-span-12'} h-full p-4 rounded-lg`} style={{
+          <div className={`${showLosers ? 'lg:col-span-6' : 'lg:col-span-12'} h-full p-4 rounded-lg`} style={{
             background: '#000000',
             border: '2px solid #1a1a1a'
           }}>
             <ViewerBracketView
               title="Cross Finals"
               subtitle="Winner Advances"
-              matches={crossMatches}
+              rounds={crossBracket.rounds}
               players={tournament.players}
               isLosers={false}
             />
