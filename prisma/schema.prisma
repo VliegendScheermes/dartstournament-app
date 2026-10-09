@@ -27,9 +27,22 @@ model Tournament {
   pools     Pool[]
   matches   Match[]
   rounds    Round[]
+  liveMatch LiveMatch?
 
   @@index([userId])
   @@index([status])
+}
+
+// Live scoreboard state for the OBS overlay (one per tournament). Kept in the
+// database because on serverless hosting the scoreboard's writes and the
+// overlay's reads are served by different instances.
+model LiveMatch {
+  tournamentId String   @id
+  payload      Json
+  seq          Float    @default(0) // increasing; older writes are ignored
+  updatedAt    DateTime @updatedAt
+
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
 }
 
 model Player {

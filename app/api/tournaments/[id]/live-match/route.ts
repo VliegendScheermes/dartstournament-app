@@ -10,10 +10,15 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
-  const data = liveMatchStore.get(id)
-  return NextResponse.json(data, {
-    headers: { 'Cache-Control': 'no-store' }
-  })
+  try {
+    const data = await liveMatchStore.get(id)
+    return NextResponse.json(data, {
+      headers: { 'Cache-Control': 'no-store' }
+    })
+  } catch (error) {
+    console.error('Error reading live match:', error)
+    return NextResponse.json({ error: 'Failed to read live match' }, { status: 500 })
+  }
 }
 
 // Only the logged-in owner of the tournament may write its live match state.
@@ -72,11 +77,16 @@ export async function POST(
   // Requests can arrive out of order — never let an older update overwrite a newer one
   const rawSeq = (body as { seq?: unknown }).seq
   const seq = typeof rawSeq === 'number' && Number.isFinite(rawSeq) ? rawSeq : 0
-  if (!liveMatchStore.set(id, body, seq)) {
-    return NextResponse.json(
-      { ok: false, ignored: true, error: 'Stale update', seq: liveMatchStore.getSeq(id) },
-      { status: 409 }
-    )
+  try {
+    if (!(await liveMatchStore.set(id, body, seq))) {
+      return NextResponse.json(
+        { ok: false, ignored: true, error: 'Stale update', seq: await liveMatchStore.getSeq(id) },
+        { status: 409 }
+      )
+    }
+  } catch (error) {
+    console.error('Error saving live match:', error)
+    return NextResponse.json({ error: 'Failed to save live match' }, { status: 500 })
   }
 
   return NextResponse.json({ ok: true })
@@ -92,6 +102,11 @@ export async function DELETE(
   const denied = await requireTournamentOwner(request, id)
   if (denied) return denied
 
-  liveMatchStore.clear(id)
+  try {
+    await liveMatchStore.clear(id)
+  } catch (error) {
+    console.error('Error clearing live match:', error)
+    return NextResponse.json({ error: 'Failed to clear live match' }, { status: 500 })
+  }
   return NextResponse.json({ ok: true })
 }
