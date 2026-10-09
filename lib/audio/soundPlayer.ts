@@ -3,10 +3,19 @@
  * Plays score announcement sounds (Russ Bray voice)
  */
 
+// /public/sounds/scoring has <score>.wav for 0–180 except these (all impossible 3-dart totals)
+const MISSING_SCORE_SOUNDS = new Set([176, 178, 179]);
+
+/** True when /sounds/scoring/<score>.wav exists. */
+export function hasScoreSound(score: number): boolean {
+  return Number.isInteger(score) && score >= 0 && score <= 180 && !MISSING_SCORE_SOUNDS.has(score);
+}
+
 class SoundPlayer {
   private audioCache: Map<number, HTMLAudioElement> = new Map();
   private enabled: boolean = true;
   private volume: number = 0.7;
+  private current: HTMLAudioElement | null = null;
 
   /**
    * Preload a sound file for a specific score
@@ -23,17 +32,26 @@ class SoundPlayer {
   }
 
   /**
-   * Play sound for a score
+   * Play sound for a score (0 = "no score", used for busts)
    */
   async playScore(score: number): Promise<void> {
     if (!this.enabled) return;
+    // Never request a file that does not exist
+    if (!hasScoreSound(score)) return;
 
     try {
       const audio = this.preloadSound(score);
+      // Stop the previous announcement so quick entries don't talk over each other
+      if (this.current && this.current !== audio) {
+        this.current.pause();
+      }
+      this.current = audio;
       // Reset audio to start if it's already playing
       audio.currentTime = 0;
       await audio.play();
     } catch (error) {
+      // play() is aborted when a newer announcement interrupts it — not an error
+      if (error instanceof DOMException && error.name === 'AbortError') return;
       console.warn(`Failed to play sound for score ${score}:`, error);
     }
   }

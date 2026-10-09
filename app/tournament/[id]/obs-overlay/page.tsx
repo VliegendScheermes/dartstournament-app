@@ -3,11 +3,20 @@
 /**
  * OBS Scoreboard Overlay
  * Transparent 1920x1080 page — add as Browser Source in OBS with "Allow transparency" enabled.
- * Reads live match state from localStorage (written by the scoreboard page).
+ * Polls live match state from /api/tournaments/[id]/live-match (written by the scoreboard page).
+ * Score announcements and Barney animations fire only for events with a new sequence number,
+ * never on page load and never based on score differences.
  */
 
-import { use, useState, useEffect, useRef } from 'react';
+import { use, useState, useEffect } from 'react';
 import { soundPlayer } from '@/lib/audio/soundPlayer';
+import {
+  announcementScore,
+  detectNewLiveEvents,
+  INITIAL_SEEN_LIVE_EVENTS,
+  type LiveMatchBarney,
+  type LiveMatchEvent,
+} from '@/lib/scoring/liveMatch';
 
 const CHECKOUTS: Record<number, string> = {
   170: 'T20 T20 D25', 167: 'T20 T19 D25', 164: 'T20 T18 D25',
@@ -60,7 +69,9 @@ const CHECKOUTS: Record<number, string> = {
   4:   'D2',          2:   'D1',
 };
 
+// Shape of LiveMatchPayload (lib/scoring/liveMatch.ts); newer fields optional for older writers
 interface LiveScoreData {
+  seq?: number;
   tournamentName: string;
   p1Name: string;
   p1Score: number;
@@ -79,8 +90,10 @@ interface LiveScoreData {
   legs: number;
   setsEnabled: boolean;
   sets: number;
+  matchWinner?: 0 | 1 | null;
   frontendVolume?: number;
-  barneyFrame?: { src: string; ts: number } | null;
+  lastEvent?: LiveMatchEvent | null;
+  barney?: LiveMatchBarney | null;
 }
 
 interface OBSOverlayPageProps {
@@ -91,56 +104,57 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
   const { id } = use(params);
   const [data, setData] = useState<LiveScoreData | null>(null);
   const [barneyAnim, setBarneyAnim] = useState<{ src: string; key: number } | null>(null);
-  const prevP1Score = useRef<number | null>(null);
-  const prevP2Score = useRef<number | null>(null);
-  const prevBarneyTs = useRef<number | null>(null);
 
   useEffect(() => {
     soundPlayer.preloadCommonSounds();
 
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    // Sequence numbers already seen; events present on the first load are not replayed
+    let seen = INITIAL_SEEN_LIVE_EVENTS;
+
     const pollApi = async () => {
       try {
         const response = await fetch(`/api/tournaments/${id}/live-match`, { cache: 'no-store' });
-        if (!response.ok) return;
-        const newData: LiveScoreData | null = await response.json();
+        if (response.ok) {
+          const newData: LiveScoreData | null = await response.json();
+          if (cancelled) return;
 
-        if (newData) {
-          // Apply frontend volume FIRST (before playing sounds)
-          if (newData.frontendVolume !== undefined) {
-            soundPlayer.setVolume(newData.frontendVolume / 100);
-            soundPlayer.setEnabled(newData.frontendVolume > 0);
+          if (newData) {
+            // Apply frontend volume FIRST (before playing sounds)
+            if (newData.frontendVolume !== undefined) {
+              soundPlayer.setVolume(newData.frontendVolume / 100);
+              soundPlayer.setEnabled(newData.frontendVolume > 0);
+            }
+
+            // Announce / animate only events with a new sequence number
+            const detected = detectNewLiveEvents(seen, newData);
+            seen = detected.seen;
+            if (detected.announce) {
+              soundPlayer.playScore(announcementScore(detected.announce));
+            }
+            if (detected.barney) {
+              setBarneyAnim({ src: detected.barney.src, key: detected.barney.seq });
+            }
+
+            setData(newData);
+          } else {
+            setData(null);
           }
-
-          // Detect score changes and play sound
-          if (prevP1Score.current !== null && newData.p1Score < prevP1Score.current) {
-            soundPlayer.playScore(prevP1Score.current - newData.p1Score);
-          }
-          if (prevP2Score.current !== null && newData.p2Score < prevP2Score.current) {
-            soundPlayer.playScore(prevP2Score.current - newData.p2Score);
-          }
-
-          prevP1Score.current = newData.p1Score;
-          prevP2Score.current = newData.p2Score;
-
-          // Detect new barney trigger
-          if (newData.barneyFrame && newData.barneyFrame.ts !== prevBarneyTs.current) {
-            prevBarneyTs.current = newData.barneyFrame.ts;
-            setBarneyAnim({ src: newData.barneyFrame.src, key: newData.barneyFrame.ts });
-          }
-
-          setData(newData);
-        } else {
-          setData(null);
         }
       } catch {
         // ignore network errors
       }
+      // Poll again 1s after this request finished, so responses can't arrive out of order
+      // (works in OBS browser source, any browser, cross-device)
+      if (!cancelled) timer = setTimeout(pollApi, 1000);
     };
 
-    // Initial fetch + poll every 1s (works in OBS browser source, any browser, cross-device)
     pollApi();
-    const interval = setInterval(pollApi, 1000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [id]);
 
   const formatSpec = () => {
@@ -182,6 +196,8 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
           <>
             {/* Checkout bar — positioned on outer wrapper (overflow visible), skip header ~41px, each row ~57px */}
             {(() => {
+              // No active player once the match is won → no checkout bar
+              if (!data.p1Active && !data.p2Active) return null;
               const activeScore = data.p1Active ? data.p1Score : data.p2Score;
               const checkout = activeScore >= 2 && activeScore <= 170 ? CHECKOUTS[activeScore] : undefined;
               if (!checkout) return null;
@@ -259,8 +275,9 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
                 score={data.p1Score}
                 legs={data.p1Legs}
                 sets={data.p1Sets}
-                active={data.p1Active}
-                startedLeg={data.p1StartedLeg}
+                active={data.p1Active || data.matchWinner === 0}
+                startedLeg={data.p1StartedLeg && data.matchWinner == null}
+                winner={data.matchWinner === 0}
                 setsEnabled={data.setsEnabled}
                 isTop
               />
@@ -274,8 +291,9 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
                 score={data.p2Score}
                 legs={data.p2Legs}
                 sets={data.p2Sets}
-                active={data.p2Active}
-                startedLeg={data.p2StartedLeg}
+                active={data.p2Active || data.matchWinner === 1}
+                startedLeg={data.p2StartedLeg && data.matchWinner == null}
+                winner={data.matchWinner === 1}
                 setsEnabled={data.setsEnabled}
                 isTop={false}
               />
@@ -360,11 +378,12 @@ interface PlayerRowProps {
   sets: number;
   active: boolean;
   startedLeg: boolean;
+  winner: boolean;
   setsEnabled: boolean;
   isTop: boolean;
 }
 
-function PlayerRow({ name, score, legs, sets, active, startedLeg, setsEnabled }: PlayerRowProps) {
+function PlayerRow({ name, score, legs, sets, active, startedLeg, winner, setsEnabled }: PlayerRowProps) {
   return (
     <div style={{
       background: active ? '#004d30' : '#001d0e',
@@ -391,6 +410,10 @@ function PlayerRow({ name, score, legs, sets, active, startedLeg, setsEnabled }:
           <span style={{ color: active ? '#d4af37' : 'rgba(212,175,55,0.35)', fontSize: 10, lineHeight: 1, transition: 'color 0.4s ease' }}>
             ▶
           </span>
+        )}
+        {/* Match winner */}
+        {winner && (
+          <span style={{ fontSize: 18, lineHeight: 1 }}>🏆</span>
         )}
       </div>
 

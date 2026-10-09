@@ -1,9 +1,33 @@
 'use client';
 
-import { use, useState, useCallback, useEffect, useRef } from 'react';
+import { use, useState, useCallback, useEffect, useRef, useSyncExternalStore, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { soundPlayer } from '@/lib/audio/soundPlayer';
 import { createClient } from '@/lib/auth/supabase';
+import {
+  applyScore,
+  canUndo,
+  createMatch,
+  hasProgress,
+  isLegInProgress,
+  parseScoreInput,
+  restoreState,
+  setLegStarter,
+  setPlayerCount,
+  setStartScore,
+  undo,
+  type PlayerIndex,
+  type X01Error,
+  type X01PlayerState,
+  type X01State,
+} from '@/lib/scoring/x01';
+import {
+  announcementScore,
+  nextSeq,
+  type LiveMatchBarney,
+  type LiveMatchEvent,
+  type LiveMatchPayload,
+} from '@/lib/scoring/liveMatch';
 
 // Standard darts checkout suggestions (2–170)
 const CHECKOUTS: Record<number, string> = {
@@ -57,18 +81,7 @@ const CHECKOUTS: Record<number, string> = {
   4:   'D2',          2:   'D1',
 };
 
-interface PlayerState {
-  name: string;
-  score: number;
-  legs: number;
-  sets: number;
-  history: number[];
-  input: string;
-  startedLeg: boolean;
-}
-
 interface GameSettings {
-  startScore: 501 | 301;
   setsEnabled: boolean;
   sets: number;
   legsEnabled: boolean;
@@ -77,12 +90,7 @@ interface GameSettings {
   p2Link: string;
 }
 
-function makePlayer(name: string, score: number, startedLeg: boolean = true): PlayerState {
-  return { name, score, legs: 0, sets: 0, history: [], input: '', startedLeg };
-}
-
 const DEFAULT_SETTINGS: GameSettings = {
-  startScore: 501,
   setsEnabled: false,
   sets: 3,
   legsEnabled: true,
@@ -91,49 +99,179 @@ const DEFAULT_SETTINGS: GameSettings = {
   p2Link: '',
 };
 
+const DEFAULT_NAMES: [string, string] = ['Player One', 'Player Two'];
+const DEFAULT_TOURNAMENT_NAME = 'Darts Tournament';
+const DEFAULT_VOLUME = 70;
+
+// ─── Persistence (localStorage) ─────────────────────────────────────────────
+
+/** Everything needed to restore the scoreboard after a reload. */
+interface StoredScoreboard {
+  version: 2;
+  /** ?p1=&p2= URL params the match was started with — identifies the match. */
+  origin: { p1: string | null; p2: string | null };
+  names: [string, string];
+  settings: GameSettings;
+  /** Full game state including the undo stack. */
+  game: X01State;
+  tournamentName: string;
+  backendVolume: number;
+  frontendVolume: number;
+}
+
+const storageKey = (id: string) => `darts-scoreboard-${id}`;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+const asString = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+const asNumber = (value: unknown, fallback: number): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+const asBoolean = (value: unknown, fallback: boolean): boolean => (typeof value === 'boolean' ? value : fallback);
+
+function readSettings(value: unknown): GameSettings {
+  const v = isRecord(value) ? value : {};
+  return {
+    setsEnabled: asBoolean(v.setsEnabled, DEFAULT_SETTINGS.setsEnabled),
+    sets: asNumber(v.sets, DEFAULT_SETTINGS.sets),
+    legsEnabled: asBoolean(v.legsEnabled, DEFAULT_SETTINGS.legsEnabled),
+    legs: asNumber(v.legs, DEFAULT_SETTINGS.legs),
+    p1Link: asString(v.p1Link) ?? '',
+    p2Link: asString(v.p2Link) ?? '',
+  };
+}
+
+function readVolume(value: unknown): number {
+  const volume = asNumber(value, DEFAULT_VOLUME);
+  return volume >= 0 && volume <= 100 ? volume : DEFAULT_VOLUME;
+}
+
+function readStoredScoreboard(id: string): StoredScoreboard | null {
+  try {
+    const raw = localStorage.getItem(storageKey(id));
+    const data: unknown = raw ? JSON.parse(raw) : null;
+    // Older versions stored only the OBS payload — nothing to restore from that
+    if (!isRecord(data) || data.version !== 2) return null;
+    const game = restoreState(data.game);
+    if (!game) return null;
+    const origin = isRecord(data.origin) ? data.origin : {};
+    const names = Array.isArray(data.names) ? data.names : [];
+    return {
+      version: 2,
+      origin: { p1: asString(origin.p1), p2: asString(origin.p2) },
+      names: [asString(names[0]) ?? DEFAULT_NAMES[0], asString(names[1]) ?? DEFAULT_NAMES[1]],
+      settings: readSettings(data.settings),
+      game,
+      tournamentName: asString(data.tournamentName) ?? DEFAULT_TOURNAMENT_NAME,
+      backendVolume: readVolume(data.backendVolume),
+      frontendVolume: readVolume(data.frontendVolume),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Initial scoreboard: the stored match when it is the same match (no ?p1=&p2= given, or the
+ * same players), otherwise a new match that keeps the format, 501/301, volumes and title.
+ */
+function loadInitialScoreboard(id: string): StoredScoreboard {
+  const searchParams = new URLSearchParams(window.location.search);
+  const p1 = searchParams.get('p1') || null;
+  const p2 = searchParams.get('p2') || null;
+  const stored = readStoredScoreboard(id);
+
+  if (stored) {
+    const noParams = p1 === null && p2 === null;
+    const sameOrigin = stored.origin.p1 === p1 && stored.origin.p2 === p2;
+    const sameNames = (p1 === null || stored.names[0] === p1) && (p2 === null || stored.names[1] === p2);
+    if (noParams || sameOrigin || sameNames) return stored;
+  }
+
+  return {
+    version: 2,
+    origin: { p1, p2 },
+    names: [p1 ?? DEFAULT_NAMES[0], p2 ?? DEFAULT_NAMES[1]],
+    settings: stored?.settings ?? DEFAULT_SETTINGS,
+    game: createMatch(stored?.game.startScore ?? 501),
+    tournamentName: stored?.tournamentName ?? DEFAULT_TOURNAMENT_NAME,
+    backendVolume: stored?.backendVolume ?? DEFAULT_VOLUME,
+    frontendVolume: stored?.frontendVolume ?? DEFAULT_VOLUME,
+  };
+}
+
+function scoreErrorMessage(error: X01Error, score: number | null): string {
+  switch (error) {
+    case 'invalid':
+      return 'Invalid score (0–180)';
+    case 'impossible-score':
+      return `${score} is not a possible score`;
+    case 'impossible-checkout':
+      return `${score} is not a possible checkout`;
+    case 'match-over':
+      return 'Match is over — Undo or start a new match';
+  }
+}
+
+// Input types that take no typed text: keys pressed while one of these has focus go to the score input
+const NON_TEXT_INPUT_TYPES = new Set(['button', 'checkbox', 'color', 'file', 'image', 'radio', 'range', 'reset', 'submit']);
+
+function isTextEntry(target: EventTarget | null): boolean {
+  if (target instanceof HTMLInputElement) return !NON_TEXT_INPUT_TYPES.has(target.type);
+  return target instanceof HTMLTextAreaElement
+    || target instanceof HTMLSelectElement
+    || (target instanceof HTMLElement && target.isContentEditable);
+}
+
 interface ScoreboardPageProps {
   params: Promise<{ id: string }>;
 }
 
+const subscribeNoop = () => () => {};
+
 export default function ScoreboardPage({ params }: ScoreboardPageProps) {
   const { id } = use(params);
+  // The match is restored from localStorage, so the scoreboard renders on the client only:
+  // no 501/501 flash after a reload and no hydration mismatch.
+  const isClient = useSyncExternalStore(subscribeNoop, () => true, () => false);
+  if (!isClient) return <div className="h-screen bg-gray-900" />;
+  return <Scoreboard id={id} />;
+}
+
+function Scoreboard({ id }: { id: string }) {
   const router = useRouter();
+  const [initial] = useState(() => loadInitialScoreboard(id));
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [tournamentName, setTournamentName] = useState('Darts Tournament');
-  const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
-  const [players, setPlayers] = useState<[PlayerState, PlayerState]>(() => [
-    makePlayer('Player One', 501, true),
-    makePlayer('Player Two', 501, false),
-  ]);
+  const [tournamentName, setTournamentName] = useState(initial.tournamentName);
+  const [settings, setSettings] = useState<GameSettings>(initial.settings);
+  const [names, setNames] = useState<[string, string]>(initial.names);
+  const [game, setGame] = useState<X01State>(initial.game);
+  // Last score event / Barney trigger for the OBS overlay (each announced once, by seq)
+  const [lastEvent, setLastEvent] = useState<LiveMatchEvent | null>(null);
+  const [barney, setBarney] = useState<LiveMatchBarney | null>(null);
   const [message, setMessage] = useState('');
-  const [activePlayer, setActivePlayer] = useState<0 | 1>(0);
   const [inputValue, setInputValue] = useState('');
-  const [backendVolume, setBackendVolume] = useState(70); // 0-100
-  const [frontendVolume, setFrontendVolume] = useState(70); // 0-100
+  const [backendVolume, setBackendVolume] = useState(initial.backendVolume); // 0-100
+  const [frontendVolume, setFrontendVolume] = useState(initial.frontendVolume); // 0-100
   const [volumeExpanded, setVolumeExpanded] = useState(true);
   const [obsExpanded, setObsExpanded] = useState(false);
-  const [barneyAnim, setBarneyAnim] = useState<{ src: string; key: number } | null>(null);
 
-  const playBarney = (src: string) => setBarneyAnim({ src, key: Date.now() });
+  const scoreInputRef = useRef<HTMLInputElement>(null);
+  const scoreFormRef = useRef<HTMLFormElement>(null);
+  const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const payloadSeqRef = useRef(0);
 
-  // Read player names from URL params after mount (useState initializer doesn't run on client during SSR hydration)
-  useEffect(() => {
-    const searchParams = new URLSearchParams(window.location.search);
-    const p1 = searchParams.get('p1');
-    const p2 = searchParams.get('p2');
-    if (p1 || p2) {
-      setPlayers(prev => [
-        { ...prev[0], name: p1 || prev[0].name },
-        { ...prev[1], name: p2 || prev[1].name },
-      ]);
-    }
-  }, []);
+  const matchOver = game.matchWinner !== null;
 
   const showMessage = useCallback((msg: string) => {
     setMessage(msg);
-    setTimeout(() => setMessage(''), 2000);
+    if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
+    messageTimerRef.current = setTimeout(() => setMessage(''), 2000);
   }, []);
+
+  const playBarney = (src: string) => setBarney({ seq: nextSeq(barney?.seq ?? 0), src });
 
   // Load tournament name from database on mount
   useEffect(() => {
@@ -172,251 +310,190 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const updatePlayer = useCallback((index: 0 | 1, updates: Partial<PlayerState>) => {
-    setPlayers(prev => {
-      const next: [PlayerState, PlayerState] = [{ ...prev[0] }, { ...prev[1] }];
-      next[index] = { ...next[index], ...updates };
-      return next;
-    });
-  }, []);
+  // Single scoring path: the visible input + form submit (keyboard input is routed here too)
+  const submitScore = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (game.matchWinner !== null) {
+      showMessage(scoreErrorMessage('match-over', null));
+      return;
+    }
+    if (inputValue.trim() === '') return;
+    const score = parseScoreInput(inputValue);
+    if (score === null) {
+      showMessage(scoreErrorMessage('invalid', null));
+      return;
+    }
+    const result = applyScore(game, score, settings);
+    if (!result.ok) {
+      showMessage(scoreErrorMessage(result.error, score));
+      return;
+    }
 
-  const resetGame = () => {
-    const s = settings.startScore;
-    setPlayers([makePlayer(players[0].name, s, true), makePlayer(players[1].name, s, false)]);
-    setActivePlayer(0);
+    const { event } = result;
+    setGame(result.state);
+    setInputValue('');
+    setLastEvent({ seq: nextSeq(lastEvent?.seq ?? 0), player: event.player, score: event.score, type: event.type });
+    // Announce after evaluating: a bust is announced as "no score" (0)
+    soundPlayer.playScore(announcementScore(event));
+
+    const name = names[event.player];
+    if (event.type === 'bust') {
+      showMessage(event.bustReason === 'leaves-one' ? 'Bust! (leaves 1)' : 'Bust!');
+    } else if (event.matchWon) {
+      showMessage(`${name} wins the match! 🏆`);
+    } else if (event.setWon) {
+      showMessage(`${name} wins the set! 🎯`);
+    } else if (event.legWon) {
+      showMessage(`${name} wins the leg! 🎯`);
+    }
   };
 
-  const applyScore = useCallback((playerIndex: 0 | 1, score: number) => {
-    // Play score sound
-    soundPlayer.playScore(score);
+  // Restores the complete previous state (scores, legs, sets, turn, starter, match win). No sound.
+  const handleUndo = () => {
+    if (!canUndo(game)) return;
+    setGame(undo(game));
+    scoreInputRef.current?.focus();
+  };
 
-    setPlayers(prev => {
-      const player = prev[playerIndex];
-      if (score < 0 || score > 180) {
-        showMessage('Invalid score (max 180)');
-        return prev;
-      }
-      const remaining = player.score - score;
-      if (remaining < 0) {
-        showMessage('Bust!');
-        const next: [PlayerState, PlayerState] = [{ ...prev[0] }, { ...prev[1] }];
-        next[playerIndex] = { ...player, input: '' };
-        // Switch to other player
-        setActivePlayer(playerIndex === 0 ? 1 : 0);
-        return next;
-      }
-      if (remaining === 1) {
-        showMessage('Bust! (leaves 1)');
-        const next: [PlayerState, PlayerState] = [{ ...prev[0] }, { ...prev[1] }];
-        next[playerIndex] = { ...player, input: '' };
-        // Switch to other player
-        setActivePlayer(playerIndex === 0 ? 1 : 0);
-        return next;
-      }
-      if (remaining === 0) {
-        showMessage(`${player.name} wins the leg! 🎯`);
-        const next: [PlayerState, PlayerState] = [{ ...prev[0] }, { ...prev[1] }];
-        const winner = playerIndex;
-        const otherPlayer = playerIndex === 0 ? 1 : 0;
-        // Winner starts next leg
-        next[winner] = {
-          ...player,
-          score: settings.startScore,
-          legs: player.legs + 1,
-          history: [],
-          input: '',
-          startedLeg: false,
-        };
-        next[otherPlayer] = {
-          ...prev[otherPlayer],
-          score: settings.startScore,
-          history: [],
-          startedLeg: true,
-        };
-        // Other player starts next leg
-        setActivePlayer(otherPlayer);
-        return next;
-      }
-      const next: [PlayerState, PlayerState] = [{ ...prev[0] }, { ...prev[1] }];
-      next[playerIndex] = {
-        ...player,
-        score: remaining,
-        history: [...player.history, score],
-        input: '',
-      };
-      // Switch to other player
-      setActivePlayer(playerIndex === 0 ? 1 : 0);
-      return next;
-    });
-  }, [showMessage, settings.startScore]);
+  // New match: clears the stored match (incl. undo history); keeps names, format and 501/301
+  const startNewMatch = () => {
+    try {
+      localStorage.removeItem(storageKey(id));
+    } catch {
+      // storage unavailable
+    }
+    setGame(createMatch(game.startScore));
+    setLastEvent(null);
+    setInputValue('');
+  };
 
-  const handleKey = useCallback((playerIndex: 0 | 1, key: string) => {
-    setPlayers(prev => {
-      const player = prev[playerIndex];
-      const next: [PlayerState, PlayerState] = [{ ...prev[0] }, { ...prev[1] }];
+  const resetGame = () => {
+    if (hasProgress(game) && !window.confirm('Match resetten? Scores, legs, sets en de undo-geschiedenis worden gewist.')) return;
+    startNewMatch();
+  };
 
-      if (key === 'undo') {
-        if (player.history.length === 0) return prev;
-        const last = player.history[player.history.length - 1];
-        next[playerIndex] = {
-          ...player,
-          score: player.score + last,
-          history: player.history.slice(0, -1),
-          input: '',
-        };
-        return next;
-      }
-      if (key === 'enter') {
-        // submit handled separately via applyScore
-        return prev;
-      }
-      if (key === 'clear') {
-        next[playerIndex] = { ...player, input: '' };
-        return next;
-      }
-      if (key === 'backspace') {
-        next[playerIndex] = { ...player, input: player.input.slice(0, -1) };
-        return next;
-      }
-      // Digit key
-      const newInput = player.input + key;
-      if (parseInt(newInput, 10) > 180) return prev;
-      next[playerIndex] = { ...player, input: newInput };
-      return next;
-    });
-  }, []);
+  const handleStartScoreChange = (value: 501 | 301) => {
+    if (value === game.startScore) return;
+    if (isLegInProgress(game) && !window.confirm(`De leg is bezig. Overschakelen naar ${value} wist de scores van deze leg. Doorgaan?`)) return;
+    setGame(setStartScore(game, value));
+  };
 
-  // Submit for active player (needs current input value)
-  const submitActive = useCallback((playerIndex: 0 | 1) => {
-    setPlayers(prev => {
-      const input = prev[playerIndex].input;
-      const score = parseInt(input, 10);
-      if (!isNaN(score)) {
-        // defer to applyScore logic via a flag — but applyScore uses setPlayers too
-        // so we call applyScore outside this setter
-      }
-      return prev;
-    });
-    // Read current input and apply
-    setPlayers(prev => {
-      const score = parseInt(prev[playerIndex].input, 10);
-      if (isNaN(score)) return prev;
-      // inline apply logic
-      const player = prev[playerIndex];
-      if (score < 0 || score > 180) {
-        showMessage('Invalid score (max 180)');
-        return prev;
-      }
-      const remaining = player.score - score;
-      if (remaining < 0) {
-        showMessage('Bust!');
-        const next: [PlayerState, PlayerState] = [{ ...prev[0] }, { ...prev[1] }];
-        next[playerIndex] = { ...player, input: '' };
-        return next;
-      }
-      if (remaining === 1) {
-        showMessage('Bust! (leaves 1)');
-        const next: [PlayerState, PlayerState] = [{ ...prev[0] }, { ...prev[1] }];
-        next[playerIndex] = { ...player, input: '' };
-        return next;
-      }
-      if (remaining === 0) {
-        showMessage(`${player.name} wins the leg! 🎯`);
-        const next: [PlayerState, PlayerState] = [{ ...prev[0] }, { ...prev[1] }];
-        next[playerIndex] = {
-          ...player,
-          score: settings.startScore,
-          legs: player.legs + 1,
-          history: [],
-          input: '',
-        };
-        return next;
-      }
-      const next: [PlayerState, PlayerState] = [{ ...prev[0] }, { ...prev[1] }];
-      next[playerIndex] = {
-        ...player,
-        score: remaining,
-        history: [...player.history, score],
-        input: '',
-      };
-      return next;
-    });
-  }, [showMessage, settings.startScore]);
+  const handleToggleStarter = (player: PlayerIndex) => {
+    if (game.legStarter === player) return;
+    if (game.matchWinner !== null) {
+      showMessage('Match is over — start a new match first');
+      return;
+    }
+    if (isLegInProgress(game) && !window.confirm(`De leg is bezig. ${names[player]} laten beginnen wist de scores van deze leg. Doorgaan?`)) return;
+    setGame(setLegStarter(game, player));
+  };
 
-  // Keyboard/numpad input
-  const activePlayerRef = useRef(activePlayer);
-  activePlayerRef.current = activePlayer;
-  const handleKeyRef = useRef(handleKey);
-  handleKeyRef.current = handleKey;
-  const submitActiveRef = useRef(submitActive);
-  submitActiveRef.current = submitActive;
+  const handleSettingChange = <K extends keyof GameSettings>(field: K, value: GameSettings[K]) => {
+    setSettings(prev => ({ ...prev, [field]: value }));
+  };
 
+  // Keyboard/numpad: keys pressed outside a text field are routed to the visible score input
+  // and Enter submits that same form — there is no second scoring path.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      // Don't intercept when typing in an input/textarea
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      const pi = activePlayerRef.current;
-      if (pi === null) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const input = scoreInputRef.current;
+      const form = scoreFormRef.current;
+      if (!input || !form) return;
 
-      if (e.key >= '0' && e.key <= '9') {
-        e.preventDefault();
-        handleKeyRef.current(pi, e.key);
-      } else if (e.code.startsWith('Numpad') && e.code.length === 7) {
-        // Numpad0–Numpad9
-        const digit = e.code.slice(6);
-        if (digit >= '0' && digit <= '9') {
+      if (e.target === input) {
+        // Typing and Enter (form submit) are handled natively by the input itself
+        if (e.key === 'Escape') {
           e.preventDefault();
-          handleKeyRef.current(pi, digit);
+          setInputValue('');
         }
-      } else if (e.key === 'Enter' || e.code === 'NumpadEnter') {
+        return;
+      }
+      // Don't intercept other text fields (names, settings, legs/sets editor)
+      if (isTextEntry(e.target)) return;
+
+      if (e.key === 'Enter') {
+        // (Numpad) Enter never "clicks" a focused button — it submits the score
         e.preventDefault();
-        submitActiveRef.current(pi);
+        if (!input.disabled) {
+          input.focus();
+          form.requestSubmit();
+        }
+        return;
+      }
+      if (input.disabled) return;
+
+      const digit = /^[0-9]$/.test(e.key) ? e.key : /^Numpad[0-9]$/.test(e.code) ? e.code.slice(6) : null;
+      if (digit !== null) {
+        e.preventDefault();
+        input.focus();
+        setInputValue(v => v + digit);
       } else if (e.key === 'Backspace') {
         e.preventDefault();
-        handleKeyRef.current(pi, 'backspace');
+        input.focus();
+        setInputValue(v => v.slice(0, -1));
       } else if (e.key === 'Escape') {
         e.preventDefault();
-        handleKeyRef.current(pi, 'clear');
+        setInputValue('');
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  // Sync live state to localStorage (same-browser tab) AND to API (OBS overlay)
-  const apiWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+  // Persist the full match (incl. undo stack) so a reload restores it
   useEffect(() => {
-    const payload = {
+    const stored: StoredScoreboard = {
+      version: 2,
+      origin: initial.origin,
+      names,
+      settings,
+      game,
       tournamentName,
-      p1Name: players[0].name,
-      p1Score: players[0].score,
-      p1Legs: players[0].legs,
-      p1Sets: players[0].sets,
-      p1Active: activePlayer === 0,
-      p1StartedLeg: players[0].startedLeg,
-      p2Name: players[1].name,
-      p2Score: players[1].score,
-      p2Legs: players[1].legs,
-      p2Sets: players[1].sets,
-      p2Active: activePlayer === 1,
-      p2StartedLeg: players[1].startedLeg,
-      startScore: settings.startScore,
+      backendVolume,
+      frontendVolume,
+    };
+    try {
+      localStorage.setItem(storageKey(id), JSON.stringify(stored));
+    } catch {
+      // storage full or unavailable — the match still runs, it just won't survive a reload
+    }
+  }, [id, initial.origin, names, settings, game, tournamentName, backendVolume, frontendVolume]);
+
+  // Debounced sync to the API for the OBS overlay (cross-browser). The first sync already
+  // carries the restored match. Each payload gets a higher seq so the API can drop
+  // requests that arrive out of order.
+  useEffect(() => {
+    const seq = nextSeq(payloadSeqRef.current);
+    payloadSeqRef.current = seq;
+    const payload: LiveMatchPayload = {
+      seq,
+      tournamentName,
+      p1Name: names[0],
+      p1Score: game.players[0].score,
+      p1Legs: game.players[0].legs,
+      p1Sets: game.players[0].sets,
+      p1Active: game.matchWinner === null && game.activePlayer === 0,
+      p1StartedLeg: game.legStarter === 0,
+      p2Name: names[1],
+      p2Score: game.players[1].score,
+      p2Legs: game.players[1].legs,
+      p2Sets: game.players[1].sets,
+      p2Active: game.matchWinner === null && game.activePlayer === 1,
+      p2StartedLeg: game.legStarter === 1,
+      startScore: game.startScore,
       legsEnabled: settings.legsEnabled,
       legs: settings.legs,
       setsEnabled: settings.setsEnabled,
       sets: settings.sets,
+      matchWinner: game.matchWinner,
       frontendVolume,
-      barneyFrame: barneyAnim ? { src: barneyAnim.src, ts: barneyAnim.key } : null,
+      lastEvent,
+      barney,
     };
 
-    // Write to localStorage (for same-browser tab fallback)
-    localStorage.setItem(`darts-scoreboard-${id}`, JSON.stringify(payload));
-
-    // Debounced write to API (for OBS overlay cross-browser).
     // Token is fetched fresh each time — Supabase auto-refreshes expired tokens.
-    if (apiWriteTimerRef.current) clearTimeout(apiWriteTimerRef.current);
-    apiWriteTimerRef.current = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       try {
         const supabase = createClient();
         const { data: { session } } = await supabase.auth.getSession();
@@ -433,21 +510,8 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
         // ignore network errors
       }
     }, 400);
-  }, [players, activePlayer, settings, tournamentName, id, frontendVolume, barneyAnim]);
-
-  const handleSettingChange = (field: keyof GameSettings, value: unknown) => {
-    setSettings(prev => {
-      const next = { ...prev, [field]: value };
-      if (field === 'startScore') {
-        const s = value as 501 | 301;
-        setPlayers(prev2 => [
-          { ...prev2[0], score: s, history: [], input: '' },
-          { ...prev2[1], score: s, history: [], input: '' },
-        ]);
-      }
-      return next;
-    });
-  };
+    return () => clearTimeout(timer);
+  }, [id, tournamentName, names, game, settings.legsEnabled, settings.legs, settings.setsEnabled, settings.sets, frontendVolume, lastEvent, barney]);
 
   return (
     <div className="flex h-screen bg-gray-900 text-white overflow-hidden">
@@ -506,7 +570,7 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
               <span className="block text-gray-400 mb-1">Game</span>
               <div className="flex gap-2">
                 {([501, 301] as const).map(v => (
-                  <button key={v} onClick={() => handleSettingChange('startScore', v)} className={`flex-1 py-1 rounded font-semibold text-sm border ${settings.startScore === v ? 'bg-green-600 border-green-500' : 'bg-gray-700 border-gray-600 hover:bg-gray-600'}`}>{v}</button>
+                  <button key={v} onClick={() => handleStartScoreChange(v)} className={`flex-1 py-1 rounded font-semibold text-sm border ${game.startScore === v ? 'bg-green-600 border-green-500' : 'bg-gray-700 border-gray-600 hover:bg-gray-600'}`}>{v}</button>
                 ))}
               </div>
             </div>
@@ -624,59 +688,64 @@ export default function ScoreboardPage({ params }: ScoreboardPageProps) {
           {([0, 1] as const).map(i => (
             <PlayerCardSimple
               key={i}
-              player={players[i]}
-              isActive={activePlayer === i}
-              onNameChange={name => updatePlayer(i, { name })}
-              onLegsChange={legs => updatePlayer(i, { legs })}
-              onSetsChange={sets => updatePlayer(i, { sets })}
-              onToggleStarter={() => {
-                // Reset leg and set this player as starter and active
-                setPlayers(prev => {
-                  const next: [PlayerState, PlayerState] = [
-                    { ...prev[0], score: settings.startScore, history: [], startedLeg: i === 0 },
-                    { ...prev[1], score: settings.startScore, history: [], startedLeg: i === 1 }
-                  ];
-                  return next;
-                });
-                setActivePlayer(i);
-              }}
+              name={names[i]}
+              player={game.players[i]}
+              isActive={!matchOver && game.activePlayer === i}
+              isStarter={game.legStarter === i}
+              isWinner={game.matchWinner === i}
+              onNameChange={name => setNames(prev => (i === 0 ? [name, prev[1]] : [prev[0], name]))}
+              onLegsChange={legs => setGame(g => setPlayerCount(g, i, 'legs', legs))}
+              onSetsChange={sets => setGame(g => setPlayerCount(g, i, 'sets', sets))}
+              onToggleStarter={() => handleToggleStarter(i)}
             />
           ))}
         </div>
 
         {/* Central input */}
         <div className="flex-shrink-0 bg-gray-800 rounded-lg border-2 border-gray-700 p-4">
-          <div className="text-center text-sm text-gray-400 mb-3">
-            {players[activePlayer].name} is aan de beurt
-          </div>
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            const score = parseInt(inputValue, 10);
-            if (!isNaN(score) && score >= 0) {
-              applyScore(activePlayer, score);
-              setInputValue('');
-            }
-          }} className="flex gap-3">
+          {game.matchWinner !== null ? (
+            <div className="flex items-center justify-center gap-4 mb-3">
+              <span className="text-yellow-300 font-bold text-lg">
+                🏆 {names[game.matchWinner]} heeft de match gewonnen!
+              </span>
+              <button
+                type="button"
+                onClick={startNewMatch}
+                className="px-4 py-1.5 rounded bg-green-600 hover:bg-green-500 text-sm font-semibold"
+              >
+                Nieuwe match
+              </button>
+            </div>
+          ) : (
+            <div className="text-center text-sm text-gray-400 mb-3">
+              {names[game.activePlayer]} is aan de beurt
+            </div>
+          )}
+          <form ref={scoreFormRef} onSubmit={submitScore} className="flex gap-3">
             <button
               type="button"
-              onClick={() => handleKey(activePlayer, 'undo')}
-              className="px-6 py-4 bg-gray-600 hover:bg-gray-500 rounded-lg text-yellow-300 font-semibold text-lg"
+              onClick={handleUndo}
+              disabled={!canUndo(game)}
+              className="px-6 py-4 bg-gray-600 hover:bg-gray-500 rounded-lg text-yellow-300 font-semibold text-lg disabled:opacity-40 disabled:cursor-not-allowed"
             >
               ↩ Undo
             </button>
             <input
-              type="number"
+              ref={scoreInputRef}
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
               value={inputValue}
               onChange={e => setInputValue(e.target.value)}
-              placeholder="Voer score in en druk enter..."
-              className="flex-1 bg-gray-700 border-2 border-gray-600 rounded-lg px-6 py-4 text-center text-2xl font-bold focus:outline-none focus:border-green-500"
-              min="0"
-              max="180"
+              placeholder={matchOver ? 'Match afgelopen' : 'Voer score in en druk enter...'}
+              disabled={matchOver}
+              className="flex-1 bg-gray-700 border-2 border-gray-600 rounded-lg px-6 py-4 text-center text-2xl font-bold focus:outline-none focus:border-green-500 disabled:opacity-50"
               autoFocus
             />
             <button
               type="submit"
-              className="px-8 py-4 bg-green-600 hover:bg-green-500 rounded-lg text-white font-semibold text-lg"
+              disabled={matchOver}
+              className="px-8 py-4 bg-green-600 hover:bg-green-500 rounded-lg text-white font-semibold text-lg disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Verzenden
             </button>
@@ -955,15 +1024,18 @@ function BarneyControls({ onPlay }: { onPlay: (src: string) => void }) {
 // ─── Player Card ────────────────────────────────────────────────────────────
 
 interface PlayerCardSimpleProps {
-  player: PlayerState;
+  name: string;
+  player: X01PlayerState;
   isActive: boolean;
+  isStarter: boolean;
+  isWinner: boolean;
   onNameChange: (name: string) => void;
   onLegsChange: (legs: number) => void;
   onSetsChange: (sets: number) => void;
   onToggleStarter: () => void;
 }
 
-function PlayerCardSimple({ player, isActive, onNameChange, onLegsChange, onSetsChange, onToggleStarter }: PlayerCardSimpleProps) {
+function PlayerCardSimple({ name, player, isActive, isStarter, isWinner, onNameChange, onLegsChange, onSetsChange, onToggleStarter }: PlayerCardSimpleProps) {
   const checkout = player.score >= 2 && player.score <= 170 ? CHECKOUTS[player.score] : undefined;
   const [editingField, setEditingField] = useState<'legs' | 'sets' | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -986,22 +1058,23 @@ function PlayerCardSimple({ player, isActive, onNameChange, onLegsChange, onSets
 
   return (
     <div
-      className={`bg-gray-800 rounded-lg p-4 flex flex-col gap-3 min-h-0 border-2 transition-colors ${isActive ? 'border-green-500' : 'border-gray-700'}`}
+      className={`bg-gray-800 rounded-lg p-4 flex flex-col gap-3 min-h-0 border-2 transition-colors ${isWinner ? 'border-yellow-400' : isActive ? 'border-green-500' : 'border-gray-700'}`}
     >
       {/* Player name with start indicator */}
       <div className="flex items-center justify-center gap-2">
+        {isWinner && <span className="text-2xl" title="Match gewonnen">🏆</span>}
         <input
           type="text"
-          value={player.name}
+          value={name}
           onChange={e => onNameChange(e.target.value)}
           className="bg-transparent text-center text-xl font-bold border-b-2 border-gray-600 focus:outline-none focus:border-green-500 pb-2 flex-1"
         />
         <button
           onClick={onToggleStarter}
-          className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-colors ${player.startedLeg ? 'bg-green-500 border-green-400' : 'bg-gray-700 border-gray-600 hover:bg-gray-600'}`}
+          className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-colors ${isStarter ? 'bg-green-500 border-green-400' : 'bg-gray-700 border-gray-600 hover:bg-gray-600'}`}
           title="Click to make this player start the leg"
         >
-          {player.startedLeg && <span className="text-white font-bold">●</span>}
+          {isStarter && <span className="text-white font-bold">●</span>}
         </button>
       </div>
 
@@ -1053,11 +1126,17 @@ function PlayerCardSimple({ player, isActive, onNameChange, onLegsChange, onSets
       <div className="flex-1 overflow-y-auto min-h-0">
         <div className="text-sm text-gray-400 mb-2">Score geschiedenis:</div>
         <div className="space-y-1">
-          {player.history.slice().reverse().map((s, i) => (
-            <div key={i} className="flex justify-between text-sm bg-gray-700 px-3 py-2 rounded">
+          {player.history.slice().reverse().map((turn, i) => (
+            <div key={player.history.length - i} className="flex justify-between text-sm bg-gray-700 px-3 py-2 rounded">
               <span className="text-gray-400">#{player.history.length - i}</span>
-              <span className="text-white font-semibold">{s}</span>
-              <span className="text-gray-500">{player.score + player.history.slice(player.history.length - i).reduce((a, b) => a + b, 0)}</span>
+              {turn.bust ? (
+                <span className="text-red-400 font-semibold">
+                  Bust <span className="text-gray-500 font-normal">({turn.score})</span>
+                </span>
+              ) : (
+                <span className="text-white font-semibold">{turn.score}</span>
+              )}
+              <span className="text-gray-500">{turn.remaining}</span>
             </div>
           ))}
         </div>
