@@ -99,6 +99,9 @@ const DEFAULT_SETTINGS: GameSettings = {
   p2Link: '',
 };
 
+// Collapses bursts of changes into one POST; added to the delay before OBS shows a score
+const SYNC_DEBOUNCE_MS = 80;
+
 const DEFAULT_NAMES: [string, string] = ['Player One', 'Player Two'];
 const DEFAULT_TOURNAMENT_NAME = 'Darts Tournament';
 const DEFAULT_VOLUME = 70;
@@ -462,7 +465,8 @@ function Scoreboard({ id }: { id: string }) {
 
   // Debounced sync to the API for the OBS overlay (cross-browser). The first sync already
   // carries the restored match. Each payload gets a higher seq so the API can drop
-  // requests that arrive out of order.
+  // requests that arrive out of order. The delay only collapses bursts (e.g. dragging a
+  // volume slider) — keep it short, it is added to the delay before OBS shows a score.
   useEffect(() => {
     const seq = nextSeq(payloadSeqRef.current);
     payloadSeqRef.current = seq;
@@ -509,7 +513,7 @@ function Scoreboard({ id }: { id: string }) {
       } catch {
         // ignore network errors
       }
-    }, 400);
+    }, SYNC_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [id, tournamentName, names, game, settings.legsEnabled, settings.legs, settings.setsEnabled, settings.sets, frontendVolume, lastEvent, barney]);
 

@@ -100,6 +100,16 @@ interface OBSOverlayPageProps {
   params: Promise<{ id: string }>;
 }
 
+// How often the overlay asks the server for new state. While a match is being
+// scored it polls fast so scores appear almost immediately; after a while
+// without changes it backs off, so an overlay left open all day stays cheap.
+const POLL_ACTIVE_MS = 250;
+const POLL_IDLE_MS = 1500;
+// How long after the last change the overlay keeps polling fast. Long enough to cover
+// normal gaps in play (walking to the board, the break between legs), so only a board
+// that is really idle — between matches, overlay left open — falls back to slow polling.
+const ACTIVE_WINDOW_MS = 180000;
+
 export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
   const { id } = use(params);
   const [data, setData] = useState<LiveScoreData | null>(null);
@@ -112,6 +122,8 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
     let timer: ReturnType<typeof setTimeout> | null = null;
     // Sequence numbers already seen; events present on the first load are not replayed
     let seen = INITIAL_SEEN_LIVE_EVENTS;
+    let lastSeq: number | null = null;
+    let lastChangeAt = Date.now();
 
     const pollApi = async () => {
       try {
@@ -119,6 +131,13 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
         if (response.ok) {
           const newData: LiveScoreData | null = await response.json();
           if (cancelled) return;
+
+          // Keep polling fast for a while after every change
+          const seq = typeof newData?.seq === 'number' ? newData.seq : null;
+          if (seq !== lastSeq) {
+            lastSeq = seq;
+            lastChangeAt = Date.now();
+          }
 
           if (newData) {
             // Apply frontend volume FIRST (before playing sounds)
@@ -145,9 +164,12 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
       } catch {
         // ignore network errors
       }
-      // Poll again 1s after this request finished, so responses can't arrive out of order
-      // (works in OBS browser source, any browser, cross-device)
-      if (!cancelled) timer = setTimeout(pollApi, 1000);
+      // Poll again only after this request finished, so responses can't arrive out of
+      // order (works in OBS browser source, any browser, cross-device)
+      if (!cancelled) {
+        const active = Date.now() - lastChangeAt < ACTIVE_WINDOW_MS;
+        timer = setTimeout(pollApi, active ? POLL_ACTIVE_MS : POLL_IDLE_MS);
+      }
     };
 
     pollApi();
