@@ -8,7 +8,7 @@
  * never on page load and never based on score differences.
  */
 
-import { use, useState, useEffect } from 'react';
+import { use, useState, useEffect, useRef } from 'react';
 import { soundPlayer } from '@/lib/audio/soundPlayer';
 import {
   announcementScore,
@@ -357,10 +357,18 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
 // ─── Barney Overlay ─────────────────────────────────────────────────────────
 
 function BarneyOverlay({ src, onDone }: { src: string; onDone: () => void }) {
+  // Keep the callback in a ref: the parent passes a new function on every render
+  // (once per poll), and depending on it would restart the timer every time, so the
+  // animation would never be cleared.
+  const doneRef = useRef(onDone);
   useEffect(() => {
-    const t = setTimeout(onDone, 3200);
-    return () => clearTimeout(t);
+    doneRef.current = onDone;
   }, [onDone]);
+
+  useEffect(() => {
+    const t = setTimeout(() => doneRef.current(), 3200);
+    return () => clearTimeout(t);
+  }, []);
 
   return (
     <>

@@ -937,45 +937,6 @@ function Soundboard() {
   );
 }
 
-// ─── Barney Overlay ─────────────────────────────────────────────────────────
-
-function BarneyOverlay({ src, onDone }: { src: string; onDone: () => void }) {
-  useEffect(() => {
-    const t = setTimeout(onDone, 3200);
-    return () => clearTimeout(t);
-  }, [onDone]);
-
-  return (
-    <>
-      <style>{`
-        @keyframes barney-pop {
-          0%   { transform: scale(0)    rotate(0deg);    opacity: 0; }
-          18%  { transform: scale(1.12) rotate(390deg);  opacity: 1; }
-          28%  { transform: scale(1)    rotate(360deg);  opacity: 1; }
-          68%  { transform: scale(1)    rotate(360deg);  opacity: 1; }
-          88%  { transform: scale(0.6)  rotate(360deg);  opacity: 0.6; }
-          100% { transform: scale(0)    rotate(360deg);  opacity: 0; }
-        }
-      `}</style>
-      <div style={{
-        position: 'absolute', inset: 0,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        pointerEvents: 'none', zIndex: 50,
-      }}>
-        <img
-          src={src}
-          alt="Barney"
-          style={{
-            width: 380, height: 380, objectFit: 'contain',
-            animation: 'barney-pop 3.2s ease-in-out forwards',
-            filter: 'drop-shadow(0 0 40px rgba(0,0,0,0.85))',
-          }}
-        />
-      </div>
-    </>
-  );
-}
-
 // ─── Barney Controls ─────────────────────────────────────────────────────────
 
 const BARNEY_WIN = [
