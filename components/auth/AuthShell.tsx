@@ -32,7 +32,7 @@ export function AuthShell({ title, subtitle, children }: AuthShellProps) {
       className="min-h-screen flex items-center justify-center px-4 py-8 bg-cover bg-center"
       style={{
         backgroundImage:
-          'linear-gradient(rgba(0, 0, 0, 0.82), rgba(8, 10, 8, 0.9)), url(/images/background-darts.png)',
+          'linear-gradient(rgba(0, 0, 0, 0.82), rgba(8, 10, 8, 0.9)), url(/images/background-darts.webp)',
         fontFamily: 'Georgia, "Times New Roman", serif',
       }}
     >

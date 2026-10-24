@@ -204,7 +204,7 @@ export function DrawViewerScreen({ id }: { id: string }) {
 
   return (
     <div className="min-h-screen py-6 px-4" style={{
-      backgroundImage: 'linear-gradient(rgba(0, 0, 0, 0.88), rgba(5, 5, 5, 0.92)), url(/images/background-darts.png)',
+      backgroundImage: 'linear-gradient(rgba(0, 0, 0, 0.88), rgba(5, 5, 5, 0.92)), url(/images/background-darts.webp)',
       backgroundSize: 'cover',
       backgroundPosition: 'center',
       backgroundAttachment: 'fixed'

@@ -44,7 +44,7 @@ export function FinalsViewerScreen({ id }: { id: string }) {
 
   return (
     <div className="min-h-screen py-8 px-4" style={{
-      backgroundImage: 'linear-gradient(rgba(0, 0, 0, 0.85), rgba(10, 10, 10, 0.9)), url(/images/background-darts.png)',
+      backgroundImage: 'linear-gradient(rgba(0, 0, 0, 0.85), rgba(10, 10, 10, 0.9)), url(/images/background-darts.webp)',
       backgroundSize: 'cover',
       backgroundPosition: 'center',
       backgroundAttachment: 'fixed'
