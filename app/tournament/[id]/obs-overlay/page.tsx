@@ -15,6 +15,7 @@ import {
   detectNewLiveEvents,
   INITIAL_SEEN_LIVE_EVENTS,
   type LiveMatchBarney,
+  type LiveMatchCelebration,
   type LiveMatchEvent,
 } from '@/lib/scoring/liveMatch';
 
@@ -94,6 +95,7 @@ interface LiveScoreData {
   frontendVolume?: number;
   lastEvent?: LiveMatchEvent | null;
   barney?: LiveMatchBarney | null;
+  celebration?: LiveMatchCelebration | null;
 }
 
 interface OBSOverlayPageProps {
@@ -110,6 +112,9 @@ const POLL_IDLE_MS = 1500;
 // that is really idle — between matches, overlay left open — falls back to slow polling.
 const ACTIVE_WINDOW_MS = 180000;
 
+// Head start for the caller, so the winning score is called before the anthem starts
+const CELEBRATION_DELAY_MS = 1600;
+
 export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
   const { id } = use(params);
   const [data, setData] = useState<LiveScoreData | null>(null);
@@ -124,6 +129,7 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
     let seen = INITIAL_SEEN_LIVE_EVENTS;
     let lastSeq: number | null = null;
     let lastChangeAt = Date.now();
+    let celebrationTimer: ReturnType<typeof setTimeout> | null = null;
 
     const pollApi = async () => {
       try {
@@ -152,6 +158,11 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
             if (detected.announce) {
               soundPlayer.playScore(announcementScore(detected.announce));
             }
+            if (detected.celebration) {
+              // Let the caller finish calling the winning score first
+              const { src } = detected.celebration;
+              celebrationTimer = setTimeout(() => soundPlayer.playClip(src), CELEBRATION_DELAY_MS);
+            }
             if (detected.barney) {
               setBarneyAnim({ src: detected.barney.src, key: detected.barney.seq });
             }
@@ -176,6 +187,8 @@ export default function OBSOverlayPage({ params }: OBSOverlayPageProps) {
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
+      if (celebrationTimer) clearTimeout(celebrationTimer);
+      soundPlayer.stopClip();
     };
   }, [id]);
 

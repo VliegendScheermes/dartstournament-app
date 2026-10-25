@@ -20,6 +20,17 @@ export interface LiveMatchBarney {
   src: string;
 }
 
+/** Celebration music after a won leg, set or match; played once, when `seq` increases. */
+export interface LiveMatchCelebration {
+  seq: number;
+  src: string;
+  /** What was won */
+  reason: 'leg' | 'set' | 'match';
+}
+
+/** The anthem the overlay plays when a leg, set or match is won */
+export const CELEBRATION_CLIP = '/sounds/celebration/chase-the-sun.webm';
+
 export interface LiveMatchPayload {
   /** Increases with every update; the API ignores POSTs older than the stored one. */
   seq: number;
@@ -45,6 +56,7 @@ export interface LiveMatchPayload {
   frontendVolume: number;
   lastEvent: LiveMatchEvent | null;
   barney: LiveMatchBarney | null;
+  celebration?: LiveMatchCelebration | null;
 }
 
 /**
@@ -66,9 +78,15 @@ export interface SeenLiveEvents {
   initialized: boolean;
   eventSeq: number;
   barneySeq: number;
+  celebrationSeq: number;
 }
 
-export const INITIAL_SEEN_LIVE_EVENTS: SeenLiveEvents = { initialized: false, eventSeq: 0, barneySeq: 0 };
+export const INITIAL_SEEN_LIVE_EVENTS: SeenLiveEvents = {
+  initialized: false,
+  eventSeq: 0,
+  barneySeq: 0,
+  celebrationSeq: 0,
+};
 
 function seqOf(value: { seq?: unknown } | null | undefined): number {
   return value && typeof value.seq === 'number' && Number.isFinite(value.seq) ? value.seq : 0;
@@ -81,15 +99,28 @@ function seqOf(value: { seq?: unknown } | null | undefined): number {
  */
 export function detectNewLiveEvents(
   seen: SeenLiveEvents,
-  data: { lastEvent?: LiveMatchEvent | null; barney?: LiveMatchBarney | null },
-): { seen: SeenLiveEvents; announce: LiveMatchEvent | null; barney: LiveMatchBarney | null } {
+  data: {
+    lastEvent?: LiveMatchEvent | null;
+    barney?: LiveMatchBarney | null;
+    celebration?: LiveMatchCelebration | null;
+  },
+): {
+  seen: SeenLiveEvents;
+  announce: LiveMatchEvent | null;
+  barney: LiveMatchBarney | null;
+  celebration: LiveMatchCelebration | null;
+} {
   const eventSeq = seqOf(data.lastEvent);
   const barneySeq = seqOf(data.barney);
+  const celebrationSeq = seqOf(data.celebration);
   const announce = seen.initialized && data.lastEvent && eventSeq > seen.eventSeq ? data.lastEvent : null;
   const barney = seen.initialized && data.barney && barneySeq > seen.barneySeq ? data.barney : null;
+  const celebration =
+    seen.initialized && data.celebration && celebrationSeq > seen.celebrationSeq ? data.celebration : null;
   return {
-    seen: { initialized: true, eventSeq, barneySeq },
+    seen: { initialized: true, eventSeq, barneySeq, celebrationSeq },
     announce,
     barney,
+    celebration,
   };
 }

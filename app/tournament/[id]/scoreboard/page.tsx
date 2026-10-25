@@ -24,7 +24,9 @@ import {
 import {
   announcementScore,
   nextSeq,
+  CELEBRATION_CLIP,
   type LiveMatchBarney,
+  type LiveMatchCelebration,
   type LiveMatchEvent,
   type LiveMatchPayload,
 } from '@/lib/scoring/liveMatch';
@@ -88,6 +90,10 @@ interface GameSettings {
   legs: number;
   p1Link: string;
   p2Link: string;
+  /** Play the anthem in the OBS overlay when a leg / set / match is won */
+  celebrateLeg: boolean;
+  celebrateSet: boolean;
+  celebrateMatch: boolean;
 }
 
 const DEFAULT_SETTINGS: GameSettings = {
@@ -97,7 +103,21 @@ const DEFAULT_SETTINGS: GameSettings = {
   legs: 3,
   p1Link: '',
   p2Link: '',
+  celebrateLeg: false,
+  celebrateSet: false,
+  celebrateMatch: false,
 };
+
+/** Which win the anthem should play for, or null when none is switched on */
+function celebrationReason(
+  event: { legWon: boolean; setWon: boolean; matchWon: boolean },
+  settings: GameSettings
+): LiveMatchCelebration['reason'] | null {
+  if (event.matchWon && settings.celebrateMatch) return 'match';
+  if (event.setWon && settings.celebrateSet) return 'set';
+  if (event.legWon && settings.celebrateLeg) return 'leg';
+  return null;
+}
 
 // Collapses bursts of changes into one POST; added to the delay before OBS shows a score
 const SYNC_DEBOUNCE_MS = 80;
@@ -142,6 +162,9 @@ function readSettings(value: unknown): GameSettings {
     legs: asNumber(v.legs, DEFAULT_SETTINGS.legs),
     p1Link: asString(v.p1Link) ?? '',
     p2Link: asString(v.p2Link) ?? '',
+    celebrateLeg: asBoolean(v.celebrateLeg, DEFAULT_SETTINGS.celebrateLeg),
+    celebrateSet: asBoolean(v.celebrateSet, DEFAULT_SETTINGS.celebrateSet),
+    celebrateMatch: asBoolean(v.celebrateMatch, DEFAULT_SETTINGS.celebrateMatch),
   };
 }
 
@@ -254,6 +277,7 @@ function Scoreboard({ id }: { id: string }) {
   // Last score event / Barney trigger for the OBS overlay (each announced once, by seq)
   const [lastEvent, setLastEvent] = useState<LiveMatchEvent | null>(null);
   const [barney, setBarney] = useState<LiveMatchBarney | null>(null);
+  const [celebration, setCelebration] = useState<LiveMatchCelebration | null>(null);
   const [message, setMessage] = useState('');
   const [inputValue, setInputValue] = useState('');
   const [backendVolume, setBackendVolume] = useState(initial.backendVolume); // 0-100
@@ -338,6 +362,12 @@ function Scoreboard({ id }: { id: string }) {
     setLastEvent({ seq: nextSeq(lastEvent?.seq ?? 0), player: event.player, score: event.score, type: event.type });
     // Announce after evaluating: a bust is announced as "no score" (0)
     soundPlayer.playScore(announcementScore(event));
+
+    // Anthem in the OBS overlay for whichever wins the operator switched on
+    const reason = celebrationReason(event, settings);
+    if (reason) {
+      setCelebration({ seq: nextSeq(celebration?.seq ?? 0), src: CELEBRATION_CLIP, reason });
+    }
 
     const name = names[event.player];
     if (event.type === 'bust') {
@@ -494,6 +524,7 @@ function Scoreboard({ id }: { id: string }) {
       frontendVolume,
       lastEvent,
       barney,
+      celebration,
     };
 
     // Token is fetched fresh each time — Supabase auto-refreshes expired tokens.
@@ -515,7 +546,7 @@ function Scoreboard({ id }: { id: string }) {
       }
     }, SYNC_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [id, tournamentName, names, game, settings.legsEnabled, settings.legs, settings.setsEnabled, settings.sets, frontendVolume, lastEvent, barney]);
+  }, [id, tournamentName, names, game, settings.legsEnabled, settings.legs, settings.setsEnabled, settings.sets, frontendVolume, lastEvent, barney, celebration]);
 
   return (
     <div className="flex h-screen bg-gray-900 text-white overflow-hidden">
@@ -614,6 +645,41 @@ function Scoreboard({ id }: { id: string }) {
                   >
                     📺 Live View
                   </button>
+
+                  {/* Anthem in the overlay when a leg, set or match is won */}
+                  <div className="pt-2 mt-1 border-t border-gray-700">
+                    <p className="text-xs text-gray-400 mb-1.5">Muziek bij winst (in de overlay)</p>
+                    <label className="flex items-center gap-2 py-0.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.celebrateLeg}
+                        onChange={e => handleSettingChange('celebrateLeg', e.target.checked)}
+                        className="accent-green-500"
+                      />
+                      <span className="text-xs">Gewonnen leg</span>
+                    </label>
+                    <label className="flex items-center gap-2 py-0.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.celebrateSet}
+                        onChange={e => handleSettingChange('celebrateSet', e.target.checked)}
+                        className="accent-green-500"
+                      />
+                      <span className="text-xs">Gewonnen set</span>
+                    </label>
+                    <label className="flex items-center gap-2 py-0.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.celebrateMatch}
+                        onChange={e => handleSettingChange('celebrateMatch', e.target.checked)}
+                        className="accent-green-500"
+                      />
+                      <span className="text-xs">Einde wedstrijd</span>
+                    </label>
+                    <p className="text-[10px] text-gray-500 mt-1 leading-snug">
+                      Chase the Sun, 20 seconden. Speelt in de OBS-overlay, niet op deze laptop.
+                    </p>
+                  </div>
                 </div>
               )}
             </div>

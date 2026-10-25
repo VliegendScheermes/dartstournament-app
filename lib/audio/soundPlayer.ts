@@ -16,6 +16,8 @@ class SoundPlayer {
   private enabled: boolean = true;
   private volume: number = 0.7;
   private current: HTMLAudioElement | null = null;
+  /** Celebration clip; kept apart from the caller so the two can overlap */
+  private clip: HTMLAudioElement | null = null;
 
   /**
    * Preload a sound file for a specific score
@@ -57,6 +59,34 @@ class SoundPlayer {
   }
 
   /**
+   * Play a celebration clip (the anthem after a won leg, set or match). It runs
+   * alongside the caller instead of replacing it, and a new one restarts it.
+   */
+  async playClip(src: string): Promise<void> {
+    if (!this.enabled) return;
+
+    try {
+      if (this.clip) {
+        this.clip.pause();
+      }
+      const audio = new Audio(src);
+      audio.volume = this.volume;
+      this.clip = audio;
+      await audio.play();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      console.warn(`Failed to play clip ${src}:`, error);
+    }
+  }
+
+  /** Stop a celebration clip that is still playing */
+  stopClip(): void {
+    if (!this.clip) return;
+    this.clip.pause();
+    this.clip = null;
+  }
+
+  /**
    * Preload commonly used sounds for better performance
    */
   preloadCommonSounds(): void {
@@ -77,6 +107,7 @@ class SoundPlayer {
     this.audioCache.forEach(audio => {
       audio.volume = this.volume;
     });
+    if (this.clip) this.clip.volume = this.volume;
   }
 
   /**
