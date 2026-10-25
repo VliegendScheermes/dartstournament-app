@@ -12,6 +12,7 @@ import { errorMessage } from '@/lib/errorMessage';
 import { SettingsForm } from '@/components/tournament/SettingsForm';
 import { PlayerManager } from '@/components/tournament/PlayerManager';
 import { PoolDisplay } from '@/components/tournament/PoolDisplay';
+import { TournamentAdvice } from '@/components/tournament/TournamentAdvice';
 import { TournamentSettings, Player } from '@/types/tournament';
 import { generateAllPoolSchedules } from '@/lib/algorithms/roundRobin';
 
@@ -100,6 +101,15 @@ export default function SetupPage({ params }: SetupPageProps) {
     } catch (error) {
       console.error('Failed to save settings:', error);
       alert(`Instellingen opslaan mislukt: ${errorMessage(error)}`);
+    }
+  };
+
+  const handleAdviceApply = async (advised: Partial<TournamentSettings>) => {
+    try {
+      await updateSettings(id, advised);
+    } catch (error) {
+      console.error('Failed to apply advice:', error);
+      alert(`Instellingen overnemen mislukt: ${errorMessage(error)}`);
     }
   };
 
@@ -260,6 +270,13 @@ export default function SetupPage({ params }: SetupPageProps) {
           </h1>
           <p className="text-gray-500 mt-1">Setup Phase</p>
         </div>
+
+        {/* Advice on how to set the tournament up */}
+        <TournamentAdvice
+          playerCount={tournament.players.length}
+          settings={tournament.settings}
+          onApply={handleAdviceApply}
+        />
 
         {/* Settings and Players */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
